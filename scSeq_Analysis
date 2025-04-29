@@ -1,0 +1,329 @@
+## scSeq analysis code for Ray et al: 
+## Multimodal delineation of a layer of effector function among exhausted CD8 T cells in tumors
+
+## Main code authors: Kenneth Hu, Arja Ray, with input from Krummel lab members
+
+library(ggplot2)
+library(dplyr)
+library(reshape2)
+library(ggrepel)
+library(RColorBrewer)
+library(Seurat)
+library(readr)
+library (monocle3)
+library (R.utils)
+library(patchwork)
+
+##--- Add Ken's code from raw data to R object
+
+
+
+# # Seurat version 4.0.2; R version 4.0.5
+# Find clusters, annotate, UMAP
+
+FourQuad <- readRDS ("20201221_cc_regress_no_sct.rds") # file that was pre-processed to generate seurat readable scSeq file with cell cycle and MT gene regressions performed and initial PCA done
+FourQuad_2 <- FindClusters(FourQuad, verbose = TRUE,
+                           algorithm = 1, resolution = 0.6, random.seed = 21212)
+DimPlot(FourQuad_2, reduction = 'umap', label = T)
+FourQuad_2_Markers <- FindAllMarkers(FourQuad_2, only.pos = TRUE, 
+                                     min.pct = 0.20, logfc.threshold = 0.25, test.use="poisson", assay = "RNA")
+FourQuad_2_Markers_padj0.1 <- FourQuad_2_Markers[which(FourQuad_2_Markers$p_val_adj<0.1),]
+FourQuad_2_Markers_padj0.1 <- FourQuad_2_Markers_padj0.1[order(FourQuad_2_Markers_padj0.1$avg_log2FC,decreasing = TRUE),]
+FourQuad_2_Markers_padj0.1 <- FourQuad_2_Markers_padj0.1[order(FourQuad_2_Markers_padj0.1$cluster,decreasing = FALSE),]
+FourQuad_2_Markers_padj0.1_Top10 <- FourQuad_2_Markers_padj0.1 %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+FourQuad_2_Markers_padj0.1_Top10_unique <- unique(FourQuad_2_Markers_padj0.1_Top10$gene)
+
+pdf("DotPlot_FourQuad_2_Markers.pdf", width = 6, height = 10)
+DotPlot(FourQuad_2, features = FourQuad_2_Markers_padj0.1_Top10_unique, cols= 'RdYlBu', 
+        assay = "RNA", dot.scale = 5) +  theme(axis.text.x=element_text(angle=45, hjust = 1, size = 10),
+                                               axis.text.y=element_text(size = 10), text = element_text(size = 14)) + coord_flip()
+dev.off()
+
+FourQuad_2$seurat_clusters_0.6 <- Idents(FourQuad_2)
+FourQuad_2$annotated_clusters <- ifelse(FourQuad_2@meta.data$seurat_clusters_0.6 == '0', 'Mem',
+                                        ifelse(FourQuad_2@meta.data$seurat_clusters_0.6 == '1', 'Exh-1',
+                                               ifelse(FourQuad_2@meta.data$seurat_clusters_0.6 == '2', 'Eff-1',
+                                                      ifelse(FourQuad_2@meta.data$seurat_clusters_0.6 == '3', 'Eff-2',
+                                                             ifelse(FourQuad_2@meta.data$seurat_clusters_0.6 == '4', 'Exh-2',
+                                                                    ifelse(FourQuad_2@meta.data$seurat_clusters_0.6 == '5', 'Cyc_Exh-1',
+                                                                           ifelse(FourQuad_2@meta.data$seurat_clusters_0.6 == '6', 'Stem', 
+                                                                                  ifelse(FourQuad_2@meta.data$seurat_clusters_0.6 == '7', 'Cyc_Exh-2',
+                                                                                         'ISG'))))))))
+FourQuad_2$annotated_clusters <- factor(FourQuad_2$annotated_clusters, 
+                                        levels = c("Stem", "Eff-1", "Eff-2", "Exh-1", "Cyc_Exh-1", "Exh-2", "Cyc_Exh-2", "Mem", "ISG"))
+
+# Final Nomenclatures in the MS 
+# Stem: Prog; Eff1: E.Eff; Eff2: KLR. Eff; Exh-1: Int; Exh-2: Term; Cyc_Exh1: Cyc1; Cyc_Exh2: Cyc2; Mem: Mem; ISG: ISG
+
+pdf("New_UMAP_FourQuad_2_Annotated_Clusters.pdf", width = 10, height = 8)
+DimPlot(FourQuad_2, reduction = 'umap', group.by = 'annotated_clusters', label = F, pt.size = 1)
+dev.off()
+
+# Customized DotPlot with mygenelist and mylevels
+
+Idents(FourQuad_2) <- FourQuad_2$annotated_clusters
+
+mygenelist_new_FourQuad2 <- c("Jun","Tcf7","Ccr7","Xcl1","Slamf6","Itgb1","Cd83", "Eomes",
+                              "Hspd1","Hsp90aa1","Hsp90ab1","Ncl", "Npm1","Nhp2", "Tnfrsf4","Tnfrsf9",
+                              "Prf1","Zeb2", "Ifng", "Nrgn", "Pglyrp1","Klrd1","Tnfrsf18","Vamp5", "Ccl1","Ccl3","Ccl4",
+                              "Tox", "Pdcd1", "Ctla4","Tmsb4x","Actg1","Coro1a",
+                              "Cenpa", "Ccnb2","Ube2c","Hmgb2","Birc5",
+                              "Hist1h1b","Hist1h2ap","Stmn1","Top2a", "Mki67",
+                              "Ccl5","Cxcr3", "Ly6c2",
+                              "Cxcl10", "Ifit3","Isg15", "Ifit1","Isg20")
+
+
+pdf("New_DotPlot_FourQuad_2_reorder_mygenelist_2.pdf", width = 9, height = 12)
+DotPlot(FourQuad_2, features= mygenelist_new_FourQuad2, cols= 'RdYlBu', group.by = "annotated_clusters",
+        assay = "RNA") +  theme(axis.text.x=element_text(angle=45, hjust = 1, size = 10),
+                                axis.text.y=element_text(size = 10), text = element_text(size = 14)) + coord_flip()
+dev.off()
+
+NoofCells <- table(FourQuad_2@meta.data[,c('ADT_maxID', 'annotated_clusters')])
+write.csv(NoofCells, file = "NoofCells_AnnotatedCluster_FourQuad_2.csv")
+# take numbers from .csv file and plot percentages in Prism
+
+
+# Overlay of quadrants onto UMAP
+
+FourQuad_2$Q1_Mock <- ifelse(FourQuad_2$ADT_maxID == "Barcode-1", 10, 0)
+FourQuad_2$Q2_Mock <- ifelse(FourQuad_2$ADT_maxID == "Barcode-2", 10, 0)
+FourQuad_2$Q3_Mock <- ifelse(FourQuad_2$ADT_maxID == "Barcode-3", 10, 0)
+FourQuad_2$Q4_Mock <- ifelse(FourQuad_2$ADT_maxID == "Barcode-4", 10, 0)
+
+pdf("New_Featureplot_BC_overlay_UMAP.pdf", width = 8, height = 6)
+FeaturePlot(FourQuad_2, features = "Q1_Mock", label = F, cols = c("light grey", "blue"))
+FeaturePlot(FourQuad_2, features = "Q2_Mock", label = F, cols = c("light grey", "red"))
+FeaturePlot(FourQuad_2, features = "Q3_Mock", label = F, cols = c("light grey", "green"))
+FeaturePlot(FourQuad_2, features = "Q4_Mock", label = F, cols = c("light grey", "purple"))
+dev.off()
+
+
+
+##----
+#Monocle analysis
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install(version = "3.12")
+
+BiocManager::install(c('BiocGenerics', 'DelayedArray', 'DelayedMatrixStats',
+                       'limma', 'S4Vectors', 'SingleCellExperiment',
+                       'SummarizedExperiment', 'batchelor', 'Matrix.utils'))
+
+install.packages("devtools")
+devtools::install_github('cole-trapnell-lab/leidenbase')
+devtools::install_github('cole-trapnell-lab/monocle3')
+remotes::install_github('satijalab/seurat-wrappers')
+library(SeuratWrappers)
+
+FourQuad_2.cds <- as.cell_data_set (FourQuad_2)
+FourQuad_2.cds <- cluster_cells(FourQuad_2.cds)
+FourQuad_2.cds <- learn_graph(FourQuad_2.cds)
+FourQuad_2.cds <- order_cells(FourQuad_2.cds, reduction_method = "UMAP")
+
+pdf("New_Monocle_All.pdf", width = 10, height = 8)
+plot_cells(FourQuad_2.cds, color_cells_by = "pseudotime", label_groups_by_cluster = FALSE, label_leaves = FALSE, label_branch_points = FALSE,
+           label_roots = FALSE, cell_size = 0.6)
+dev.off()
+
+FourQuad_2.cds <- estimate_size_factors(FourQuad_2.cds)
+FourQuad_2.cds@rowRanges@elementMetadata@listData[["gene_short_name"]] <- rownames(FourQuad_2[["RNA"]])
+
+trajectory <- pseudotime(FourQuad_2.cds)
+FourQuad_2@meta.data$pseudotime <- trajectory[match(names(trajectory), colnames(FourQuad_2))]
+
+extractMonocleTrajectory(
+  FourQuad_2.cds,
+  FourQuad_2,
+  pseudotime,
+  column_state = "State",
+  column_pseudotime = "Pseudotime"
+)
+
+pdf("New_Violin_Pseudotime_annotated_clusters.pdf", width = 10, height = 8)
+VlnPlot(FourQuad_2, features = "pseudotime", pt.size = 0)
+dev.off()
+
+
+
+# Function for ensemble score calculation
+
+# here # genes :vector of gene names; object: seurat object
+
+ensemble_score_RNA <- function (genes, object){
+  # genes :vector of gene names
+  # object: seurat object
+  noofgenes = length (genes)
+  noofcells = length (colnames(object))
+  perc_score <- array (dim = c(noofgenes, noofcells))
+  ens_score <- vector (length = noofcells)
+  for (i in 1: noofgenes){  # iterating over genelist
+    current_gene <- genes[i]
+    current = as.vector(object@assays$RNA[current_gene]) # gets expression for all cells of the current gene in a vector
+    current_ordered = sort (current, decreasing = TRUE)
+    for (j in 1:noofcells){
+      current_exp = current [j]
+      if (current_exp > 0){
+        for (k in 1: noofcells) {
+          if (current_exp >= current_ordered [k]) {
+            percentile = (1-k/noofcells)*100
+            break
+          }
+        }
+        perc_score [i, j] = percentile 
+      }
+      else {
+        perc_score [i, j] = 0
+      }
+    }    
+  }    
+  ens_score <- colMeans(perc_score)
+}
+
+# Calculate various scores
+
+# Circulatory, Residency, Stat5a_Beltra, MybKO, Hudson_Cd101neg, Hudson_Cd101pos, Daniel et al, clusters
+
+# Daniel et al clusters
+Tex_genelist <- read.csv('Wherry_Satpathy_gene_list.csv') # cluster-wise DEGs from Daniel et al., 2022
+
+Tex_KLR	<- c('Cx3cr1',	'Zeb2',	'Klre1',	'Klrc1',	'Klf2',	'Klrk1',	'Rap1b',	'Il18rap',	'Ahnak') # removing genes that are not represented
+Tex_Term <-c('Cd7',	'Gzma',	'Cd160',	'Rgs1',	'Fos',	'Dusp1',	'Trgv2',	'Chn2',	'Ptger4')	
+
+FourQuad_2$TexISG_score <- ensemble_score_RNA (Tex_genelist$Tex_ISG, FourQuad_2)
+FourQuad_2$TexEEff_score <- ensemble_score_RNA (Tex_genelist$Tex_Eeff, FourQuad_2)
+FourQuad_2$TexProg_score <- ensemble_score_RNA (Tex_genelist$Tex_Prog, FourQuad_2)
+FourQuad_2$TexInt_score <- ensemble_score_RNA (Tex_genelist$Tex_Int, FourQuad_2)
+FourQuad_2$TexKLR_score <- ensemble_score_RNA (Tex_KLR, FourQuad_2)
+FourQuad_2$TexTerm_score <- ensemble_score_RNA (Tex_Term, FourQuad_2)
+FourQuad_2$TexLung_score <- ensemble_score_RNA (Tex_genelist$Tex_Lung, FourQuad_2)
+FourQuad_2$Tnaive_score <- ensemble_score_RNA (Tex_genelist$T_naive, FourQuad_2)
+FourQuad_2$Tmem_score <- ensemble_score_RNA (Tex_genelist$T_mem, FourQuad_2)
+FourQuad_2$TEff_score <- ensemble_score_RNA (Tex_genelist$T_eff, FourQuad_2)
+FourQuad_2$Tem_score <- ensemble_score_RNA (Tex_genelist$T_em, FourQuad_2)
+
+DotPlot(FourQuad_2, features = c('TexProg_score', 'TexEEff_score', 'TexKLR_score',
+                                 'TexInt_score', 'TexTerm_score', 'TexISG_score', 'Exhaustion_score', 'Tmem_score'), cols= 'RdYlBu',
+        dot.scale = 12) +  theme(axis.text.x=element_text(angle=45, hjust = 1, size = 10),
+                                 axis.text.y=element_text(size = 10), text = element_text(size = 14))
+
+
+#-----Trm and Circ scores
+
+Trm_Circ <- read.csv  (file = "CoreResidency_Circulating_Signatures.csv") # reading signatures from Milner et al., 2017
+Trm_list <- Trm_Circ$Core.Trm.Signature
+Circ_list <- Trm_Circ$Core.Circulating.Signature[1:93] # removing erroneous NAs
+
+Trm_list_clean <- Trm_list[!(Trm_list %in% c("Gpr56", "Ube2s ", "Wsb1 "))] # removing non-expressed genes
+Trm_list_clean <- Trm_list_clean[-c(115,117)] # removing ube2s and wsb1
+
+Circ_list_clean <- Circ_list[!(Circ_list %in% c('2010012O05Rik', '3110052M02Rik', 'Dnahc8',
+                                                'Fam65b', 'Gm11435', 'Pion', 'Prune'))] # removing non-expressed genes
+
+FourQuad_2$Trm_score <- ensemble_score_RNA (Trm_list_clean, FourQuad_2)
+FourQuad_2$Circ_score <- ensemble_score_RNA (Circ_list_clean, FourQuad_2)
+
+#---Beltra and Hudson scores
+
+Beltra_Sig1_list <- c('Crtam', 'Mnda', 'Tnfsf4', 'Tcf7', 'Cxcr5') 
+Beltra_Sig7_list <- c('Aak1', 'Abcb9','Abi3','Btbd11', 'Adam8', 'Ap5b1', 'Aplp1', 'Appl2', 'Arhgap10', 'Ccrl2', 'Cd160', 'Cd200r1',
+                      'Cd38', 'Cd7', 'Cela1', 'Ckb', 'Chst2', 'Cipc', 'Coro2a', 'Crim1', 'Cysltr2', 'Dtx4', 'Dusp6', 'Fam102a', 'Enpp5', 'Etv3', 'Fam78a', 'Gadd45b',
+                      'Gdf11', 'Glcci1', 'Glrx', 'Hic1', 'Il12rb1', 'Il21r', 'Itih5', 'Kcna3', 'Klk8', 'L3mbtl3', 'Litaf', 'Lpar6', 'Nedd9', 'Padi2', 'Pdcd1', 'Pde4b', 'Pde7a',
+                      'Pdgfb', 'Pelo', 'Pglyrp2', 'Pik3ap1', 'Ppp1r16b', 'Ptger4', 'Ret', 'Rgs1', 'Rgs3', 'Rundc3b', 'Sepn1', 'Sh2d2a', 'Slc16a6', 'Slc22a15', 'Slc39a6', 'Snai3', 
+                      'Soat2', 'Srbd', 'St14', 'Syne2', 'Tmem135','Tmem140', 'Tnfsf10', 'Wbp1', 'Zbtb38')
+Beltra_Sig1_list[!Beltra_Sig1_list %in% (rownames(FourQuad_2))] #which genes are not in this dataset
+# "Mnda"
+Beltra_Sig7_list[!Beltra_Sig7_list %in% (rownames(FourQuad_2))]#which genes are not in this dataset
+#  "Sepn1" "Srbd"     
+
+Beltra_Sig1_list <- Beltra_Sig1_list[Beltra_Sig1_list %in% (rownames(FourQuad_2))] # remove genes not in the dataset
+Beltra_Sig7_list <- Beltra_Sig7_list[Beltra_Sig7_list %in% (rownames(FourQuad_2))] # remove genes not in the dataset
+
+FourQuad_2$Beltra_Sig1_score <- ensemble_score_RNA (Beltra_Sig1_list, FourQuad_2)
+FourQuad_2$Beltra_Sig7_score <- ensemble_score_RNA (Beltra_Sig7_list, FourQuad_2)
+
+Hudson_Cd101pos_list <- c('Cd101', 'Ccdc136', 'Asb2', 'Csf1',
+                          'Fcrl6', 'Cd7', 'Nmur1', 'Plekhg1', 'Pip5k1b', 'Cdh1', 'Pdzd2', 'Cited4', 'Heyl', 'Rtn1', 
+                          'Htra3', 'Osgin1')
+
+Hudson_Cd101neg_list <- c('S1pr5', 'Kcnj8', 'Cd109', 'Ccl9', 'Emp1', 'Il18rap', 'Tpp3', 'Cmah', 'Ovol2',
+                          'Tubb3', 'Lrrc75b', 'Evpl', 'Klra9', 'Serpinb9b', 'Pdlim1', 'Anxa1', 'Nhsl2',
+                          'Tnfrsf25', 'Lmna', 'Cx3cr1', 'Eps8', 'Cdc42ep1', 'Klrb1c', 'Fam129b')
+
+Hudson_Cd101pos_list[!Hudson_Cd101pos_list %in% (rownames(FourQuad_2))] # NULL #which genes are not in this dataset
+Hudson_Cd101neg_list[!Hudson_Cd101neg_list %in% (rownames(FourQuad_2))] #  "S1pr5" "Tpp3" #which genes are not in this dataset
+Hudson_Cd101neg_list <- Hudson_Cd101neg_list[Hudson_Cd101neg_list %in% (rownames(FourQuad_2))] # remove genes not in the dataset
+
+FourQuad_2$Hudson_Cd101pos_score <- ensemble_score_RNA (Hudson_Cd101pos_list, FourQuad_2)
+FourQuad_2$Hudson_Cd101neg_score <- ensemble_score_RNA (Hudson_Cd101neg_list, FourQuad_2)
+
+
+#----MybcKO score
+
+mybKO <- read.csv('Kallies_2022__TEX_WT_MybKO.csv') # obtain gene lsit directly from this MS
+mybKO <- mybKO %>% filter(adj.P.Val < 0.1)
+mybKO <- mybKO[order(mybKO$logFC, decreasing = TRUE),]
+mybKOtop50 <- mybKO %>% top_n(n = 50, wt = logFC)
+
+TEX_mybKO_list <- c('Nebl', 'Ctse', 'Map7', 'Cmtm7', 'Tnfsf8', 'Mef2c', 'Il18r1', 'Dpp4', 'Cxcr4', 'Ccr2') # final genelist
+FourQuad_2$TEX_mybKO_score <- ensemble_score_RNA (TEX_mybKO_list, FourQuad_2)
+
+
+# Function to plot 2 by 2 tileplots of expression of genes by name
+
+TilePlot_2x2_RdYlBu <- function(obj, feature, assay, slot){
+  require(ggplot2)
+  require(RColorBrewer)
+  Idents(obj)<-obj$ADT_maxID
+  feature.averages = AverageExpression(obj,assays = assay, slot = slot,features = feature,verbose = 'FALSE')
+  print(feature.averages)
+  level1 <- min(feature.averages$RNA) - 0.05*abs(min(feature.averages$RNA))
+  level2 <- max(feature.averages$RNA) + 0.05*abs(max(feature.averages$RNA))
+  feature.averages = as.data.frame(t(feature.averages[[1]]))
+  feature.averages$protein_level = c(1,2,1,2)
+  feature.averages$mrna_level = c(2,2,1,1)
+  colnames(feature.averages)[1]<-'value'
+  p1<-ggplot(feature.averages, aes(x = protein_level, y=mrna_level)) +
+    geom_tile(aes(fill = value),color='black') +
+    #geom_text(aes(label = round(value, 2)))+
+    scale_fill_distiller(limits = c(level1, level2), type = "seq",palette = "RdYlBu", direction = -1, aesthetics = "fill")+
+    labs(title = paste(feature))+coord_fixed()+theme(axis.text = element_blank())
+  return(p1)
+}
+
+
+TilePlot_2x2_RdYlBu(FourQuad_2, feature = "Myb", assay = "RNA", slot = "scale.data")
+TilePlot_2x2_RdYlBu(FourQuad_2, feature = "Prdm1", assay = "RNA", slot = "scale.data")
+TilePlot_2x2_RdYlBu(FourQuad_2, feature = "Id2", assay = "RNA", slot = "scale.data")
+TilePlot_2x2_RdYlBu(FourQuad_2, feature = "Jun", assay = "RNA", slot = "scale.data")
+TilePlot_2x2_RdYlBu(FourQuad_2, feature = "Stat5a", assay = "RNA", slot = "scale.data")
+TilePlot_2x2_RdYlBu(FourQuad_2, feature = "Tbx21", assay = "RNA", slot = "scale.data")
+TilePlot_2x2_RdYlBu(FourQuad_2, feature = "Runx3", assay = "RNA", slot = "scale.data")
+TilePlot_2x2_RdYlBu(FourQuad_2, feature = "Tigit", assay = "RNA", slot = "scale.data")
+TilePlot_2x2_RdYlBu(FourQuad_2, feature = "Ifng", assay = "RNA", slot = "scale.data")
+TilePlot_2x2_RdYlBu(FourQuad_2, feature = "Batf", assay = "RNA", slot = "scale.data")
+TilePlot_2x2_RdYlBu(FourQuad_2, feature = "Eomes", assay = "RNA", slot = "scale.data")
+TilePlot_2x2_RdYlBu(FourQuad_2, feature = "Tox", assay = "RNA", slot = "scale.data")
+TilePlot_2x2_RdYlBu(FourQuad_2, feature = "Tcf7", assay = "RNA", slot = "scale.data")
+TilePlot_2x2_RdYlBu(FourQuad_2, feature = "Slamf6", assay = "RNA", slot = "scale.data")
+TilePlot_2x2_RdYlBu(FourQuad_2, feature = "Pdcd1", assay = "RNA", slot = "scale.data")
+TilePlot_2x2_RdYlBu(FourQuad_2, feature = "Cd38", assay = "RNA", slot = "scale.data")
+
+
+
+# plotting 2x2 tileplots from metadata (can't get this to iterate so doing one by one)
+
+a <- VlnPlot(FourQuad_2, features = 'Beltra_Stat5a_score', group.by = 'ADT_maxID') #change the metadata column as needed
+b <- aggregate (a$data$Beltra_Stat5a_score, by =list(a$data$ident), FUN = "mean")
+level1 <- min(b$x) - 0.05*min(b$x)
+level2 <- max(b$x) + 0.05*max(b$x)
+b$protein_level = c(1,2,1,2)
+b$mrna_level = c(2,2,1,1)
+p1 <- ggplot(b, aes(x = protein_level, y=mrna_level)) +
+  geom_tile(aes(fill = x),color='black')+
+  # geom_text(aes(label = round(x, 2)))+
+  scale_fill_distiller(limits = c(level1, level2), type = 'seq',direction = -1,  palette = "RdYlBu", aesthetics = 'fill')+
+  labs(title = paste('Beltra_Stat5a_score'))+coord_fixed()+theme(axis.text = element_blank())
+
+# repeat the same script above for Hudson_Cd101pos_score, Hudson_Cd101neg_score, TEX_mybKO_score, Trm_score, Circ_score
