@@ -1,0 +1,385 @@
+## CITE-Seq analysis code for Ray et al.,: 
+## Multimodal delineation of a layer of effector function among exhausted CD8 T cells in tumors
+
+library(ggplot2)     
+library(dplyr)       
+library(reshape2)    
+library(scales)      
+library(reshape)
+library(ggrepel)
+library(RColorBrewer)
+library(pheatmap)
+library(Seurat)
+
+
+
+T1 <- IPIPOOL004.P1.scrna.CD45_enriched
+
+####----------NORMALIZING ADTs (RNA already pre-processed)-------------####
+
+
+# ADT filters. Plot nCount and nFeature and select cutoff points
+VlnPlot(T1, features = 'nCount_ADT', group.by = 'orig.ident', pt.size = 0)
+# nCount_ADT cutoff 10K
+VlnPlot(T1, features = 'nFeature_ADT', group.by = 'orig.ident', pt.size = 0)
+# nFeature_ADT cutoff 50
+
+pdf("Original_nCount_nFeature_ADT.pdf")
+VlnPlot(IPIPOOL004.P1.scrna.CD45_enriched, features = 'nCount_ADT', group.by = 'orig.ident', log = TRUE, pt.size = 0)
+VlnPlot(IPIPOOL004.P1.scrna.CD45_enriched, features = 'nFeature_ADT', group.by = 'orig.ident', pt.size = 0)
+dev.off()
+
+T1 <- subset(T1, subset = nCount_ADT <10000 & nFeature_ADT >75)
+
+DefaultAssay(T1) <- 'ADT'
+# we will use all ADT features for dimensional reduction
+# we set a dimensional reduction name to avoid overwriting the 
+VariableFeatures(T1) <- rownames(T1[["ADT"]])
+T1 <- NormalizeData(T1, normalization.method = 'CLR', margin = 2)%>% ScaleData() %>% RunPCA(reduction.name = 'apca')
+
+ElbowPlot(T1, reduction = 'pca')
+ElbowPlot(T1, reduction = 'apca')
+
+T1 <- FindMultiModalNeighbors(
+  T1, reduction.list = list("pca", "apca"), 
+  dims.list = list(1:30, 1:18), modality.weight.name = "RNA.weight"
+)
+
+T1 <- RunUMAP(T1, nn.name = "weighted.nn", reduction.name = "wnn.umap", reduction.key = "wnnUMAP_")
+T1 <- FindClusters(T1, graph.name = "wsnn", algorithm = 3, resolution = 2, verbose = FALSE)
+DimPlot(T1, reduction = 'wnn.umap', label = TRUE, repel = TRUE, label.size = 2.5) + NoLegend()
+
+DefaultAssay(T1) <- 'ADT'
+FeaturePlot(T1, features = c('CD45', 'CD11b', 'CD20', 'CD3', 'CD4.1', 'CD8'), ncol = 3, reduction = 'wnn.umap')
+FeaturePlot(T1, features = c('CD314--NKG2D', 'CD335--NKp46', 'TCR-V-D-2', 'CD3', 'CD4.1', 'CD8'), ncol = 3, reduction = 'wnn.umap')
+
+# Gating_On_CD8 -----------------------------------------------------------
+
+
+pdf("New_CD45_CD11b_gate1.pdf", width = 8, height = 6)
+FeatureScatter(T1, feature1 = 'CD45', feature2 = 'CD11b', group.by = 'orig.ident',plot.cor = FALSE)+NoLegend()+
+  scale_x_continuous(breaks = seq(0, 3, by =0.2)) + scale_y_continuous(breaks = seq(0, 4, by =0.2))
+dev.off()
+T1$Gating1 <- ifelse(T1@assays$ADT@data['CD45',]>=0.9 & T1@assays$ADT@data['CD11b',]<=0.7, 'Lymphoid', 
+                     ifelse(T1@assays$ADT@data['CD45',]>0.9 & T1@assays$ADT@data['CD11b',]>=0.8, 'Myeloid',
+                            ifelse(T1@assays$ADT@data['CD45',]<=0.5 & T1@assays$ADT@data['CD11b',]<=0.7, 'NonImmune', 
+                                   'Other')))
+pdf("New_CD45_CD11b_gate1_color_coded.pdf", width = 8, height = 6)
+FeatureScatter(T1, feature1 = 'CD45', feature2 = 'CD11b', group.by = 'Gating1',plot.cor = FALSE)+
+  scale_x_continuous(breaks = seq(0, 3, by =0.2)) + scale_y_continuous(breaks = seq(0, 4, by =0.2))
+dev.off()
+T1_Lymphoid <- subset(T1, subset = Gating1 == 'Lymphoid')
+
+
+
+
+pdf("New_TCRVD2_NKp46_Lymphoid.pdf", width = 8, height = 6)
+FeatureScatter(T1_Lymphoid, feature1 = 'CD335--NKp46', feature2 = 'TCR-V-D-2',
+               group.by = 'Gating1', plot.cor = FALSE) +
+  scale_x_continuous(breaks = seq(0, 3, by =0.2)) + scale_y_continuous(breaks = seq(0, 4, by =0.2))
+dev.off()
+pdf("New_CD20_NKp46_Lymphoid.pdf", width = 8, height = 6)
+FeatureScatter(T1_Lymphoid, feature1 = 'CD335--NKp46', feature2 = 'CD20',
+               group.by = 'Gating1', plot.cor = FALSE) +
+  scale_x_continuous(breaks = seq(0, 3, by =0.2)) + scale_y_continuous(breaks = seq(0, 4, by =0.2))
+dev.off()
+T1_Lymphoid$Gating2 <- ifelse(T1_Lymphoid@assays$ADT@data['CD335--NKp46',]<= 1.2
+                              & T1_Lymphoid@assays$ADT@data['TCR-V-D-2',]<= 0.6
+                              & T1_Lymphoid@assays$ADT@data['CD20',]<= 0.6,'NonNK_B_GD','NK_B_GD')
+T1_Lymphoid_Dump <- subset(T1_Lymphoid, subset = Gating2 == 'NonNK_B_GD')
+
+
+
+pdf("New_CD3_CD8_Lymphoid_Dump.pdf", width = 8, height = 6)
+FeatureScatter(T1_Lymphoid_Dump, feature1 = 'CD3', feature2 = 'CD8',
+               group.by = 'Gating2', plot.cor = FALSE) +
+  scale_x_continuous(breaks = seq(0, 3, by =0.2)) + scale_y_continuous(breaks = seq(0, 4, by =0.2))
+dev.off()
+T1_Lymphoid_Dump$Gating3 <- ifelse(T1_Lymphoid_Dump@assays$ADT@data['CD3',]> 0.7,'Tcells','Other')
+T1_Tcells <- subset(T1_Lymphoid_Dump, subset = Gating3  == 'Tcells')
+
+
+
+pdf("New_CD8_CD4_Tcells.pdf", width = 8, height = 6)
+FeatureScatter(T1_Tcells, feature1 = 'CD8', feature2 = 'CD4.1',
+               group.by = 'Gating3', plot.cor = FALSE) +
+  scale_x_continuous(breaks = seq(0, 3, by =0.2)) + scale_y_continuous(breaks = seq(0, 4, by =0.2))
+dev.off()
+T1_Tcells$Gating4 <- ifelse(T1_Tcells@assays$ADT@data['CD8',]>= 1.0
+                            & T1_Tcells@assays$ADT@data['CD4.1',]< 1.0, 'CD8','CD4_DN_DP')
+T1_CD8 <- subset(T1_Tcells, subset = Gating4 == 'CD8')
+
+
+
+T1$MockCD8 <- ifelse(colnames(T1) %in% colnames(T1_CD8), 10, 0)
+
+pdf("New_QC_CD8_Gating_orig_Object.pdf", width = 8, height = 6)
+FeaturePlot(T1, features = c('CD335--NKp46', 'TCR-V-D-2', 'CD3', 'CD4.1', 'CD8','MockCD8'), 
+            ncol = 3, reduction = 'wnn.umap')
+dev.off()
+
+
+
+
+# Clustering_on_CD8 -------------------------------------------------------
+
+DefaultAssay(T1_CD8) <-'SCT'
+T1_CD8 <- RunPCA(T1_CD8, reduction.name = 'pca')
+DefaultAssay(T1_CD8) <-'ADT'
+T1_CD8 <- RunPCA(T1_CD8, reduction.name = 'apca')
+
+
+T1_CD8 <- FindMultiModalNeighbors(
+  T1_CD8, reduction.list = list("pca", "apca"), 
+  dims.list = list(1:20, 1:18), modality.weight.name = "RNA.weight"
+)
+
+T1_CD8 <- RunUMAP(T1_CD8, nn.name = "weighted.nn", reduction.name = "wnn.umap", reduction.key = "wnnUMAP_")
+T1_CD8 <- FindClusters(T1_CD8, graph.name = "wsnn", algorithm = 3, resolution = 0.4)
+pdf("New_UMAP_CD8_res0.4.pdf", width = 8, height = 6)
+DimPlot(T1_CD8, reduction = 'wnn.umap', label = TRUE, repel = TRUE, label.size = 5, group.by = 'wsnn_res.0.4') + NoLegend()
+dev.off()
+
+DimPlot(T1_CD8, reduction = 'umap', label = TRUE, repel = TRUE, label.size = 5, group.by = 'seurat_clusters') + NoLegend()
+
+Markers_CD8_SCT <- FindAllMarkers(T1_CD8, only.pos = TRUE, logfc.threshold = 0.5, min.pct = 0.25,
+                                  assay = 'SCT', test.use = 'poisson')
+Markers_CD8_SCT_top8 <- Markers_CD8_SCT %>% filter(avg_log2FC > 0.5 ) %>%  group_by(cluster) %>% top_n(8, wt = avg_log2FC)
+gene_list_SCT <- unique(Markers_CD8_SCT_top8$gene)
+Markers_CD8_ADT <- FindAllMarkers(T1_CD8, only.pos = TRUE, logfc.threshold = 0.5, min.pct = 0.25,
+                                  assay = 'ADT', test.use = 'poisson')
+Markers_CD8_ADT_top8 <- Markers_CD8_ADT %>% filter(avg_log2FC > 0.5 ) %>%  group_by(cluster) %>% top_n(8, wt = avg_log2FC)
+gene_list_ADT <-unique(Markers_CD8_ADT_top8$gene)
+
+
+
+
+pdf("New_DotPlot_T1_CD8_SCT_Markers.pdf", width = 6, height = 8)
+DotPlot(T1_CD8, features = gene_list_SCT, cols= 'RdYlBu', 
+        assay = "SCT", dot.scale = 4) +  theme(axis.text.x=element_text(angle=45, hjust = 1, size = 6),
+                                               axis.text.y=element_text(size = 6), text = element_text(size = 6)) + coord_flip()
+dev.off()
+
+
+pdf("New_DotPlot_T1_CD8_ADT_Markers.pdf", width = 6, height = 8)
+DotPlot(T1_CD8, features = gene_list_ADT, cols= 'RdYlBu', 
+        assay = "ADT", dot.scale = 5) +  theme(axis.text.x=element_text(angle=45, hjust = 1, size = 6),
+                                               axis.text.y=element_text(size = 6), text = element_text(size = 6)) + coord_flip()
+dev.off()
+
+
+T1_CD8$WNN_annotated <- ifelse(T1_CD8$wsnn_res.0.4 == 0, 'Intermediate',
+                               ifelse(T1_CD8$wsnn_res.0.4 == 1, 'Eff-2',
+                                      ifelse(T1_CD8$wsnn_res.0.4 == 2, 'Naive',
+                                             ifelse(T1_CD8$wsnn_res.0.4 == 3, 'Eff-Exh',
+                                                    ifelse(T1_CD8$wsnn_res.0.4 == 4, 'Eff-1',
+                                                           ifelse(T1_CD8$wsnn_res.0.4 == 5, 'Cxcl13+',
+                                                                  ifelse(T1_CD8$wsnn_res.0.4 == 6, 'Metallothionein+',
+                                                                         ifelse(T1_CD8$wsnn_res.0.4 == 7, 'Prolif','Cxcl2+'))))))))
+
+# Tn: Naive; Tem: Eff-1; TexEarly: Eff-2; TexInt: Intermediate; TexLate: Eff-Exh; TexCyc: Prolif; TexCXCL13: Cxcl13+; Cxcl2+: Cxcl2+; MT+: Metallothionein+
+
+
+T1_CD8$WNN_annotated_level <- factor(T1_CD8$WNN_annotated, levels = c('Naive', 'Eff-1', 'Eff-2','Intermediate', 
+                                                                      'Eff-Exh','Prolif','Cxcl13+', 'Metallothionein+', 'Cxcl2+'))
+Idents(T1_CD8) <- 'WNN_annotated_level'
+
+pdf("New_UMAP_CD8_res0.4_annotated_level.pdf", width = 8, height = 6)
+DimPlot(T1_CD8, reduction = 'wnn.umap', label = TRUE, repel = TRUE, label.size = 5, 
+        group.by = 'WNN_annotated_level', pt.size = 1.5) + NoLegend()
+DimPlot(T1_CD8, reduction = 'wnn.umap', label = FALSE, repel = TRUE, label.size = 5, 
+        group.by = 'WNN_annotated_level', pt.size = 1.5) + NoLegend()
+dev.off()
+
+
+pdf("New_DotPlot_T1_CD8_SCT_Markers_Annotated.pdf", width = 6, height = 8)
+DotPlot(T1_CD8, features = gene_list_SCT, cols= 'RdYlBu', 
+        assay = "SCT", dot.scale = 4) +  theme(axis.text.x=element_text(angle=45, hjust = 1, size = 6),
+                                               axis.text.y=element_text(size = 6), text = element_text(size = 6)) + coord_flip()
+dev.off()
+
+pdf("New_DotPlot_T1_CD8_ADT_Markers_Annotated.pdf", width = 6, height = 8)
+DotPlot(T1_CD8, features = gene_list_ADT, cols= 'RdYlBu', 
+        assay = "ADT", dot.scale = 5) +  theme(axis.text.x=element_text(angle=45, hjust = 1, size = 6),
+                                               axis.text.y=element_text(size = 6), text = element_text(size = 6)) + coord_flip()
+dev.off()
+
+
+# Quadrant_delineation_DEG ------------------------------------------------
+
+pdf(file = 'New_ViolinPlot_Quadrant_Gating.pdf', width = 8, height = 6)
+VlnPlot(T1_CD8, features = 'CD69.1', assay = 'ADT', pt.size = 0, group.by = 'Gating4')
+VlnPlot(T1_CD8, features = 'mouse--IgG1--kappa-isotype-ctrl', assay = 'ADT', group.by = 'Gating4')
+VlnPlot(T1_CD8, features = 'CD69', assay = 'SCT', pt.size = 0.25, group.by = 'Gating4')
+dev.off()
+
+a <- VlnPlot(T1_CD8, features = 'CD69.1', assay = 'ADT', pt.size = 0, group.by = 'Gating4')
+b <- VlnPlot(T1_CD8, features = 'mouse--IgG1--kappa-isotype-ctrl', assay = 'ADT', group.by = 'Gating4')
+c <- VlnPlot(T1_CD8, features = 'CD69', assay = 'SCT', pt.size = 0, group.by = 'Gating4')
+
+pdf(file = 'New_Histograms_Quadrant_Gating.pdf', width = 8, height = 6)
+ggplot(a$data, aes(x = CD69.1))+ geom_density()+ 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+  xlim(0, 5)+ ylim(0, 1.8)
+ggplot(b$data, aes(x = `mouse--IgG1--kappa-isotype-ctrl`))+ geom_density(linetype = 'dashed')+ 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+  xlim(0, 5)+ ylim(0, 1.8)
+dev.off()
+
+pdf(file = 'New_Histograms_Quadrant_Gating_RNA.pdf', width = 8, height = 6)
+ggplot(c$data, aes(x = CD69))+ geom_density()+ 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.background = element_blank(), axis.line = element_line(colour = "black"))
+dev.off()
+
+
+# Adding metadata to denote CD69 RNA and protein levels
+
+T1_CD8$Quadrants <- ifelse(T1_CD8@assays$SCT@data["CD69",]>=1 & T1_CD8@assays$ADT@data["CD69.1",]< 1.0 , 'Q1_RNAhiPROlo', 
+                           ifelse(T1_CD8@assays$SCT@data["CD69",]>=1 & T1_CD8@assays$ADT@data["CD69.1",]>= 1.0 , 'Q2_RNAhiPROhi',  
+                                  ifelse(T1_CD8@assays$SCT@data["CD69",]< 1 & T1_CD8@assays$ADT@data["CD69.1",]< 1.0, 'Q3_RNAloPROlo',
+                                         'Q4_RNAloPROhi')))
+T1_CD8$Quadrants_alt <- ifelse(T1_CD8@assays$SCT@data["CD69",]>1 & T1_CD8@assays$ADT@data["CD69.1",]<= 2 , 'Q1_RNAhiPROlo', 
+                               ifelse(T1_CD8@assays$SCT@data["CD69",]>1 & T1_CD8@assays$ADT@data["CD69.1",]> 2 , 'Q2_RNAhiPROhi',  
+                                      ifelse(T1_CD8@assays$SCT@data["CD69",]<= 1 & T1_CD8@assays$ADT@data["CD69.1",]<= 2, 'Q3_RNAloPROlo',
+                                             'Q4_RNAloPROhi')))
+
+
+# Overlay quadrant gating
+
+pdf("New_MockQ2_overlay_UMAP_WNN_SCT.pdf", width = 8, height = 6)
+FeaturePlot(T1_CD8, features = 'Q2_Mock', reduction = 'wnn.umap', pt.size = 1.5,
+            cols = c('light grey', 'red'))
+FeaturePlot(T1_CD8, features =  'Q2_Mock', reduction = 'umap', pt.size = 1.5,
+            cols = c('light grey', 'red')) +
+  xlim(-7, 7) + ylim(-6, 7)
+dev.off()
+
+pdf("New_MockQ4_overlay_UMAP_WNN.pdf", width = 8, height = 6)
+FeaturePlot(T1_CD8, features = 'Q4_Mock', reduction = 'wnn.umap', pt.size = 1.25,
+            cols = c('light grey', 'purple'))
+dev.off()
+
+T1_CD8$Q2_Mock <- ifelse(T1_CD8$Quadrants == 'Q2_RNAhiPROhi', 10, 0)
+T1_CD8$Q4_Mock <- ifelse(T1_CD8$Quadrants == 'Q4_RNAloPROhi', 10, 0)
+
+pdf("New_MockQ2_overlay_UMAP_WNN_SCT.pdf", width = 8, height = 6)
+FeaturePlot(T1_CD8, features = 'Q2_Mock', reduction = 'wnn.umap', pt.size = 1.5,
+            cols = c('light grey', 'red'))
+FeaturePlot(T1_CD8, features =  'Q2_Mock', reduction = 'umap', pt.size = 1.5,
+            cols = c('light grey', 'red')) +
+  xlim(-7, 7) + ylim(-6, 7)
+dev.off()
+
+# each cluster by quadrants
+write.csv(table(T1_CD8$WNN_annotated, T1_CD8$Quadrants), file = 'ClustersbyQuadrants.csv') # stacked bar plot in Prism
+
+# Function for generating ensemble gene scores
+
+ensemble_score_RNA <- function (genes, object){
+  # genes :vector of gene names
+  # object: seurat object
+  noofgenes = length (genes)
+  noofcells = length (colnames(object))
+  perc_score <- array (dim = c(noofgenes, noofcells))
+  ens_score <- vector (length = noofcells)
+  for (i in 1: noofgenes){  # iterating over genelist
+    current_gene <- genes[i]
+    current = as.vector(object@assays$RNA[current_gene]) # gets expression for all cells of the current gene in a vector
+    current_ordered = sort (current, decreasing = TRUE)
+    for (j in 1:noofcells){
+      current_exp = current [j]
+      if (current_exp > 0){
+        for (k in 1: noofcells) {
+          if (current_exp >= current_ordered [k]) {
+            percentile = (1-k/noofcells)*100
+            break
+          }
+        }
+        perc_score [i, j] = percentile 
+      }
+      else {
+        perc_score [i, j] = 0
+      }
+    }    
+  }    
+  ens_score <- colMeans(perc_score)
+}
+
+# Function for generating ensemble protein scores
+
+ensemble_score_ADT <- function (genes, object){
+  # genes :vector of gene names
+  # object: seurat object
+  noofgenes = length (genes)
+  noofcells = length (colnames(object))
+  perc_score <- array (dim = c(noofgenes, noofcells))
+  ens_score <- vector (length = noofcells)
+  for (i in 1: noofgenes){  # iterating over genelist
+    current_gene <- genes[i]
+    current = as.vector(object@assays$ADT[current_gene]) # gets expression for all cells of the current gene in a vector
+    current_ordered = sort (current, decreasing = TRUE)
+    for (j in 1:noofcells){
+      current_exp = current [j]
+      for (k in 1: noofcells){
+        if (current_exp >= current_ordered [k]){
+          percentile = (1-k/noofcells)*100
+          break
+        }
+      }
+      perc_score [i, j] = percentile
+    }
+  }
+  ens_score <- colMeans(perc_score)
+}
+
+
+# ploting Naive, Progenitor, Exhaustion, Effector scores - Progenitor and Effector from Daniel et al., 2022
+
+Exhaustion_list <- c('CD279--PD-1', 'CD152', 'CD38.1', 'CD39')
+Naive_list <- c('CD127--IL-7Ra','CD62L','CD45RA')
+
+# removing LHFP, IGFL2, CHGB (non-existent in this dataset)
+WS_Prog_list <- c('ID3', 'CXCL10', 'SLAMF6','RPL10', 'RPL41', 'MT-ATP6', 'RPL9')
+WS_Eff_list <- c('KLRG1', 'CCR2',	'S100A10',	'ITGAX', 	'VIM', 	'DNAJC15'	, 'PYCARD', 'ANXA1', 'TAGLN2')
+
+
+T1_CD8$Exhaustion_score <- ensemble_score_ADT(Exhaustion_list, T1_CD8)
+T1_CD8$Naive_score <- ensemble_score_ADT(Naive_list, T1_CD8)
+T1_CD8$Cyt_Amit_score <- ensemble_score_RNA(Cytotoxic_Amit_list, T1_CD8)
+
+T1_CD8$Zheng_TCF7_score <- ensemble_score_RNA(Zheng_TCF7_list, T1_CD8)
+T1_CD8$Zheng_TCF7_score2 <- ensemble_score_RNA(Zheng_TCF7_list_2, T1_CD8)
+T1_CD8$Zheng_c08_score <- ensemble_score_RNA(Zheng_c08_list, T1_CD8)
+T1_CD8$WS_Prog_score <- ensemble_score_RNA(WS_Prog_list, T1_CD8)
+T1_CD8$WS_Eff_score <- ensemble_score_RNA(WS_Eff_list, T1_CD8)
+
+pdf('New_VlnPlot_Prog_Eff_Naive_Exhaustion_score.pdf', width = 10, height = 6)
+VlnPlot(T1_CD8, features = 'Naive_score', group.by = 'WNN_annotated_level', pt.size = 0)+
+  stat_summary(fun = median, geom='point', size = 5, colour = "black", shape = 95)
+VlnPlot(T1_CD8, features = 'WS_Prog_score', group.by = 'WNN_annotated_level', pt.size = 0)+
+  stat_summary(fun = median, geom='point', size = 5, colour = "black", shape = 95)
+VlnPlot(T1_CD8, features = 'WS_Eff_score', group.by = 'WNN_annotated_level', pt.size = 0)+
+  stat_summary(fun = median, geom='point', size = 5, colour = "black", shape = 95)
+VlnPlot(T1_CD8, features = 'Exhaustion_score', group.by = 'WNN_annotated_level', pt.size = 0)+
+  stat_summary(fun = median, geom='point', size = 5, colour = "black", shape = 95)
+dev.off()
+
+
+# expression of JUN, FOS, IFNG, Exhaustion per patient
+
+a <- VlnPlot(T1_CD8, features = 'JUN', group.by = 'Quadrants', split.by = 'SAMPLE.by.SNPs')
+b <- aggregate (a$data$`JUN`, by =list(a$data$ident, a$data$split), FUN = "median")
+
+a <- VlnPlot(T1_CD8, features = 'FOS', group.by = 'Quadrants', split.by = 'SAMPLE.by.SNPs')
+b <- aggregate (a$data$`FOS`, by =list(a$data$ident, a$data$split), FUN = "median")
+
+a <- VlnPlot(T1_CD8, features = 'IFNG', group.by = 'Quadrants', split.by = 'SAMPLE.by.SNPs')
+b <- aggregate (a$data$`Naive_score`, by =list(a$data$ident, a$data$split), FUN = "median")
+
+a <- VlnPlot(T1_CD8, features = 'Exhaustion_score', group.by = 'Quadrants', split.by = 'SAMPLE.by.SNPs')
+b <- aggregate (a$data$`Exhaustion_score`, by =list(a$data$ident, a$data$split), FUN = "median")
+
+# repeat on TexEarly and TexLate subsets only 
