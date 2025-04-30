@@ -236,8 +236,6 @@ dev.off()
 
 Q2_Q4_Markers_RNA <- FindMarkers(T1_CD8, ident.1 = 'Q2_RNAhiPROhi', ident.2 = 'Q4_RNAloPROhi', assay = 'RNA',
                                  logfc.threshold = 0.4, min.pct = 0.25, test.use = 'poisson')
-Q2_Q1_Markers_RNA <- FindMarkers(T1_CD8, ident.1 = 'Q2_RNAhiPROhi', ident.2 = 'Q1_RNAhiPROlo', assay = 'RNA',
-                                 logfc.threshold = 0.4, min.pct = 0.25, test.use = 'poisson')
 Q2_Q4_Markers_RNA_filter <- Q2_Q4_Markers_RNA %>% filter(p_val_adj <0.01)
 Q2_Q4_Markers_RNA_filter <- Q2_Q4_Markers_RNA_filter[order(Q2_Q4_Markers_RNA_filter$avg_log2FC,decreasing = TRUE),]
 Q2_Q4_Markers_RNA_filter_pos <- Q2_Q4_Markers_RNA_filter %>% filter(avg_log2FC >0)
@@ -360,11 +358,6 @@ WS_Eff_list <- c('KLRG1', 'CCR2',	'S100A10',	'ITGAX', 	'VIM', 	'DNAJC15'	, 'PYCA
 
 T1_CD8$Exhaustion_score <- ensemble_score_ADT(Exhaustion_list, T1_CD8)
 T1_CD8$Naive_score <- ensemble_score_ADT(Naive_list, T1_CD8)
-T1_CD8$Cyt_Amit_score <- ensemble_score_RNA(Cytotoxic_Amit_list, T1_CD8)
-
-T1_CD8$Zheng_TCF7_score <- ensemble_score_RNA(Zheng_TCF7_list, T1_CD8)
-T1_CD8$Zheng_TCF7_score2 <- ensemble_score_RNA(Zheng_TCF7_list_2, T1_CD8)
-T1_CD8$Zheng_c08_score <- ensemble_score_RNA(Zheng_c08_list, T1_CD8)
 T1_CD8$WS_Prog_score <- ensemble_score_RNA(WS_Prog_list, T1_CD8)
 T1_CD8$WS_Eff_score <- ensemble_score_RNA(WS_Eff_list, T1_CD8)
 
