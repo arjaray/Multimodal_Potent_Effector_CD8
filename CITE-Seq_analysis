@@ -234,6 +234,18 @@ ggplot(c$data, aes(x = CD69))+ geom_density()+
         panel.background = element_blank(), axis.line = element_line(colour = "black"))
 dev.off()
 
+Q2_Q4_Markers_RNA <- FindMarkers(T1_CD8, ident.1 = 'Q2_RNAhiPROhi', ident.2 = 'Q4_RNAloPROhi', assay = 'RNA',
+                                 logfc.threshold = 0.4, min.pct = 0.25, test.use = 'poisson')
+Q2_Q1_Markers_RNA <- FindMarkers(T1_CD8, ident.1 = 'Q2_RNAhiPROhi', ident.2 = 'Q1_RNAhiPROlo', assay = 'RNA',
+                                 logfc.threshold = 0.4, min.pct = 0.25, test.use = 'poisson')
+Q2_Q4_Markers_RNA_filter <- Q2_Q4_Markers_RNA %>% filter(p_val_adj <0.01)
+Q2_Q4_Markers_RNA_filter <- Q2_Q4_Markers_RNA_filter[order(Q2_Q4_Markers_RNA_filter$avg_log2FC,decreasing = TRUE),]
+Q2_Q4_Markers_RNA_filter_pos <- Q2_Q4_Markers_RNA_filter %>% filter(avg_log2FC >0)
+Q2_Q4_Markers_RNA_filter_neg <- Q2_Q4_Markers_RNA_filter %>% filter(avg_log2FC <0)
+
+write.csv(Q2_Q4_Markers_RNA_filter_pos, file = 'Q2_Q4_markers_pos.csv')
+write.csv(Q2_Q4_Markers_RNA_filter_neg, file = 'Q2_Q4_markers_neg.csv')
+
 
 # Adding metadata to denote CD69 RNA and protein levels
 
