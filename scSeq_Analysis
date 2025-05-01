@@ -14,7 +14,7 @@ library (monocle3)
 library (R.utils)
 library(patchwork)
 
-##--- Add Ken's code from raw data to R object
+##--- # starting with a pre-processed seurat object. For pre-processing details, refer to Hu et al., 2020
 
 
 
