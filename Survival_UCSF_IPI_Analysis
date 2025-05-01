@@ -1,0 +1,68 @@
+## UCSF_IPI cohort survival analysis code for Ray et al.,: 
+## Multimodal delineation of a layer of effector function among exhausted CD8 T cells in tumors
+
+library(ggplot2) # To plot things
+library(survival) # To do kaplan-meier survival analyses
+library(ggfortify) # Fancy ggplot
+library(survminer) # Survival plot plus stats
+library(ggbreak) # for breaks in axis
+library(dplyr)
+library(stringr)
+
+
+# Survival Analysis_HNSC_KID_LUNG_HEP_MEL ---------------------------------
+
+Q2_Q4_Survival <- read.csv("Survival_Q2_Q4_clean.csv", header = TRUE, check.names = FALSE) # csv file with Q2 and Q4 ensemble scores per patient and survival data from UCSF IPI cohort
+Q2_Q4_Survival_clean <- na.omit(Q2_Q4_Survival)
+Q2_Q4_Survival_clean$Ind <- str_sub(Q2_Q4_Survival_clean$rna_seq.tube_name, 4, 6)
+
+ind <- unique(Q2_Q4_Survival_clean$Ind)
+
+# inputs
+master_table <- Q2_Q4_Survival_clean
+q <- 0.5
+alltypes <- levels(factor(master_table$Ind))
+types <- c('HNS', 'KID', 'HEP', 'LUN', 'MEL')
+types3 <- c('BLA','CRC','GBM','GYN','PDA','SRC')
+
+# initialize
+
+upper <- vector('numeric', length = length(types3)) # toggle types1 or types2 from here on (can be iterated as a function)
+lower <- vector('numeric', length = length(types3))
+
+# first, calculate quantiles locally for each indication
+tab <- master_table[master_table$Ind %in% types3,]
+
+for (i in 1: length(types3)){
+  current <- types3[i]
+  temp <- tab[tab$Ind == current,]
+  upper[i] = quantile(temp$`Q2/Q4_new`, na.rm = TRUE, probs = q)
+  lower[i] = quantile(temp$`Q2/Q4_new`, na.rm = TRUE, probs = 1-q)
+}
+
+# then, assigning hi/low/mid to each patient 
+for (j in 1: nrow(tab)){
+  ctype <- tab$Ind[j]
+  if (ctype %in% types3){
+    m <- which (grepl(ctype,types3))
+    tab$Group[j] <- ifelse(tab$`Q2/Q4_new`[j] > upper[m], 'High', 
+                           ifelse(tab$`Q2/Q4_new`[j] < lower[m], 'Low', 'Mid'))
+  }
+}
+
+# then extract sub-table for survival analysis - only high low groups in the given indications
+
+tab_select <- tab[tab$Group %in% c('High', 'Low'),]
+
+# Create survival table and plot it
+Survival_table <- survfit(Surv(`OS Time`, OS) ~ Group, data=tab_select, )
+#autoplot(Survival_table, conf.int = F)
+surv_pvalue(Survival_table, method = 'survdiff')
+
+
+# Use ggplot craft here as well to make the graph prettier
+pdf(file = 'Survival_BLA_CRC_GBM_GYN_PDA_SRC_Ind_split_median.pdf', width = 8, height = 8)
+ggsurvplot(Survival_table, data = tab_select, color = 'Group', palette = c('red', 'purple'),
+           censor.size = 5, pval = TRUE, xlab = 'Days')
+dev.off()
+
