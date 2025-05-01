@@ -1,0 +1,457 @@
+## TCGA analysis code for Ray et al.,: 
+## Multimodal delineation of a layer of effector function among exhausted CD8 T cells in tumors
+# Code author : Tristan Courau
+
+# starting from a curated list of TCGA samples (primary tumor) as laid out in Combes et al., 2022
+
+# Q2 vs Q4 ####
+
+TCGA_data_trans = read.csv("~/Downloads/TCGA_sub_data_Arja_Q2_Q4.csv", header = TRUE, check.names = FALSE)
+rownames(TCGA_data_trans) <- TCGA_data_trans$Sample
+
+Q2 <- c('CD69', 'CCL4L2', 'CCL4', 'FOS', 'HSPA1B', 'DNAJB1', 'DUSP1', 'JUN', 'HSPA1A', 'KLF6', 'NFKBIA', 'JUNB', 'NR4A1')
+Q4 <- c('CD74', 'COTL1', 'ACTG1', 'PFN1', 'ACTB', 'GAPDH')
+
+## Percentile scores ####
+
+# Subset data based on genes from signature
+Q2_exp <- subset(TCGA_data_trans, select = Q2)
+Q2_exp_log <- as.data.frame(lapply(Q2_exp, function(x) log10(x + 1)))
+# Calculate percentiles for each gene across samples
+Q2_percentiles <- apply(Q2_exp_log, 2, function(x) ecdf(x)(x) * 100)
+# Calculate the gene signature score for each sample (average of percentiles)
+Q2_score_percentiles <- rowMeans(Q2_percentiles)
+# Apply to original data table
+TCGA_data_trans$Q2_score_percentiles <- Q2_score_percentiles
+# Survival code
+TCGA_data_trans$Q2_score_cat <- ifelse(TCGA_data_trans$Q2_score_percentiles >= quantile(TCGA_data_trans$Q2_score_percentiles, 0.7), "Q2_High",
+                                       ifelse(TCGA_data_trans$Q2_score_percentiles <= quantile(TCGA_data_trans$Q2_score_percentiles, 0.3), "Q2_Low", "Q2_Intermediate"))
+
+# Subset data based on genes from signature
+Q4_exp <- subset(TCGA_data_trans, select = Q4)
+Q4_exp_log <- as.data.frame(lapply(Q4_exp, function(x) log10(x + 1)))
+# Calculate percentiles for each gene across samples
+Q4_percentiles <- apply(Q4_exp_log, 2, function(x) ecdf(x)(x) * 100)
+# Calculate the gene signature score for each sample (average of percentiles)
+Q4_score_percentiles <- rowMeans(Q4_percentiles)
+# Apply to original data table
+TCGA_data_trans$Q4_score_percentiles <- Q4_score_percentiles
+# Survival code
+TCGA_data_trans$Q4_score_cat <- ifelse(TCGA_data_trans$Q4_score_percentiles >= quantile(TCGA_data_trans$Q4_score_percentiles, 0.7), "Q4_High",
+                                       ifelse(TCGA_data_trans$Q4_score_percentiles <= quantile(TCGA_data_trans$Q4_score_percentiles, 0.3), "Q4_Low", "Q4_Intermediate"))
+
+# Make ratio and ratio_cat
+TCGA_data_trans$Q2_Q4_score_ratio <- TCGA_data_trans$Q2_score_percentiles / TCGA_data_trans$Q4_score_percentiles
+
+TCGA_data_trans$Q2_Q4_score_ratio_cat <- ifelse(TCGA_data_trans$Q2_Q4_score_ratio >= quantile(TCGA_data_trans$Q2_Q4_score_ratio, 0.7), "Q2_Q4_High",
+                                                ifelse(TCGA_data_trans$Q2_Q4_score_ratio <= quantile(TCGA_data_trans$Q2_Q4_score_ratio, 0.3), "Q2_Q4_Low", "Q2_Q4_Intermediate"))
+
+pdf("~/Downloads/Q2_vs_Q4_binning_in_ALL.pdf", width = 6, height = 3, useDingbats = F)
+ggplot(TCGA_data_trans, aes(x=Q2_score_percentiles, y=Q4_score_percentiles, color = Q2_Q4_score_ratio_cat)) +
+  geom_point() + theme_bw() + scale_color_manual(values = c('red', 'grey50', 'purple'))
+dev.off()
+
+## Survival chunk ####
+Survival_param_Hu_Q2_Q4_genes_score_all <- c('Sample', 'Q2_Q4_score_ratio_cat', 'Q2_score_cat', 'Q4_score_cat', 'OS.time', 'OS.status', 'indication')
+TCGA_Hu_Q2_Q4_genes_score_surv_all <- subset(TCGA_data_trans, select = Survival_param_Hu_Q2_Q4_genes_score_all)
+TCGA_Hu_Q2_Q4_genes_score_surv_all_sub_Q2 <- subset(TCGA_Hu_Q2_Q4_genes_score_surv_all, Q2_score_cat %in% c('Q2_High', 'Q2_Low'))
+TCGA_Hu_Q2_Q4_genes_score_surv_all_sub_Q4 <- subset(TCGA_Hu_Q2_Q4_genes_score_surv_all, Q4_score_cat %in% c('Q4_High', 'Q4_Low'))
+TCGA_Hu_Q2_Q4_genes_score_surv_all_sub_Q2_Q4_ratio <- subset(TCGA_Hu_Q2_Q4_genes_score_surv_all, Q2_Q4_score_ratio_cat %in% c('Q2_Q4_High', 'Q2_Q4_Low'))
+
+Survival_table_TCGA_Hu_Q2_lo_genes_score_all_Q2 <- survfit(Surv(OS.time, OS.status) ~ Q2_score_cat, data=TCGA_Hu_Q2_Q4_genes_score_surv_all_sub_Q2)
+Survival_table_TCGA_Hu_Q2_lo_genes_score_all_Q4 <- survfit(Surv(OS.time, OS.status) ~ Q4_score_cat, data=TCGA_Hu_Q2_Q4_genes_score_surv_all_sub_Q4)
+Survival_table_TCGA_Hu_Q2_lo_genes_score_all_Q2_Q4_ratio <- survfit(Surv(OS.time, OS.status) ~ Q2_Q4_score_ratio_cat, data=TCGA_Hu_Q2_Q4_genes_score_surv_all_sub_Q2_Q4_ratio)
+
+## Q2 survival ####
+strata <- names(Survival_table_TCGA_Hu_Q2_lo_genes_score_all_Q2$strata)
+counts <- Survival_table_TCGA_Hu_Q2_lo_genes_score_all_Q2$n
+group_counts <- setNames(counts, strata)
+legend_labels <- paste(names(group_counts), " (n=", group_counts, ")", sep = "")
+
+pdf("~/Downloads/Q2_TCGA_survival_ALL.pdf", width = 10, height = 8, useDingbats = F)
+ggsurvplot(Survival_table_TCGA_Hu_Q2_lo_genes_score_all_Q2, conf.int = FALSE, surv.size = 1.2, xlab = 'Days', ylab = 'Survival', legend.title = "",
+           ylim = c(0, NA), xlim = c(0,3000), break.x.by = 500, palette = c('firebrick4', 'coral'), legend.labs = legend_labels, pval = T) +
+  ggtitle("TCGA survival of Q2 high vs low")
+dev.off()
+
+## Q4 survival ####
+strata <- names(Survival_table_TCGA_Hu_Q2_lo_genes_score_all_Q4$strata)
+counts <- Survival_table_TCGA_Hu_Q2_lo_genes_score_all_Q4$n
+group_counts <- setNames(counts, strata)
+legend_labels <- paste(names(group_counts), " (n=", group_counts, ")", sep = "")
+
+pdf("~/Downloads/Q4_TCGA_survival_ALL.pdf", width = 10, height = 8, useDingbats = F)
+ggsurvplot(Survival_table_TCGA_Hu_Q2_lo_genes_score_all_Q4, conf.int = FALSE, surv.size = 1.2, xlab = 'Days', ylab = 'Survival', legend.title = "",
+           ylim = c(0, NA), xlim = c(0,3000), break.x.by = 500, palette = c('darkorchid4', 'orchid1'), legend.labs = legend_labels, pval = T) +
+  ggtitle("TCGA survival of Q4 high vs low")
+dev.off()
+
+## Q2_Q4 ratio survival ####
+strata <- names(Survival_table_TCGA_Hu_Q2_lo_genes_score_all_Q2_Q4_ratio$strata)
+counts <- Survival_table_TCGA_Hu_Q2_lo_genes_score_all_Q2_Q4_ratio$n
+group_counts <- setNames(counts, strata)
+legend_labels <- paste(names(group_counts), " (n=", group_counts, ")", sep = "")
+
+pdf("~/Downloads/Q2_Q4_ratio_TCGA_survival_ALL.pdf", width = 10, height = 8, useDingbats = F)
+ggsurvplot(Survival_table_TCGA_Hu_Q2_lo_genes_score_all_Q2_Q4_ratio, conf.int = FALSE, surv.size = 1.2, xlab = 'Days', ylab = 'Survival', legend.title = "",
+           ylim = c(0, NA), xlim = c(0,3000), break.x.by = 500, palette = c('red', 'purple'), legend.labs = legend_labels, pval = T) +
+  ggtitle("TCGA survival of Q2 vs Q4 ratio")
+dev.off()
+
+## LOOP indications ratio ####
+
+# List of indications
+indications <- sort(unique(TCGA_data_trans$indication))
+
+plots_list <- list()
+
+# Loop over each indication
+for (indic in indications) {
+  
+  # Subset data for the current indication
+  indication_data <- subset(TCGA_data_trans, indication == indic)
+  
+  # Subset data based on genes from signature
+  Q2_exp <- subset(indication_data, select = Q2)
+  Q2_exp_log <- as.data.frame(lapply(Q2_exp, function(x) log10(x + 1)))
+  # Calculate percentiles for each gene across samples
+  Q2_percentiles <- apply(Q2_exp_log, 2, function(x) ecdf(x)(x) * 100)
+  # Calculate the gene signature score for each sample (average of percentiles)
+  Q2_score_percentiles <- rowMeans(Q2_percentiles)
+  # Apply to original data table
+  indication_data$Q2_score_percentiles <- Q2_score_percentiles
+  # Survival code
+  indication_data$Q2_score_cat <- ifelse(indication_data$Q2_score_percentiles >= quantile(indication_data$Q2_score_percentiles, 0.7), "Q2_High",
+                                         ifelse(indication_data$Q2_score_percentiles <= quantile(indication_data$Q2_score_percentiles, 0.3), "Q2_Low", "Q2_Intermediate"))
+  
+  # Subset data based on genes from signature
+  Q4_exp <- subset(indication_data, select = Q4)
+  Q4_exp_log <- as.data.frame(lapply(Q4_exp, function(x) log10(x + 1)))
+  # Calculate percentiles for each gene across samples
+  Q4_percentiles <- apply(Q4_exp_log, 2, function(x) ecdf(x)(x) * 100)
+  # Calculate the gene signature score for each sample (average of percentiles)
+  Q4_score_percentiles <- rowMeans(Q4_percentiles)
+  # Apply to original data table
+  indication_data$Q4_score_percentiles <- Q4_score_percentiles
+  # Check if it looks right
+  ggplot(indication_data, aes(x=log(C1QC), y=Q4_score_percentiles)) + geom_point() 
+  # Survival code
+  indication_data$Q4_score_cat <- ifelse(indication_data$Q4_score_percentiles >= quantile(indication_data$Q4_score_percentiles, 0.7), "Q4_High",
+                                         ifelse(indication_data$Q4_score_percentiles <= quantile(indication_data$Q4_score_percentiles, 0.3), "Q4_Low", "Q4_Intermediate"))
+  
+  # Make ratio, ratio_cat and gate
+  indication_data$Q2_Q4_score_ratio <- indication_data$Q2_score_percentiles / indication_data$Q4_score_percentiles
+  
+  indication_data$Q2_Q4_score_ratio_cat <- ifelse(indication_data$Q2_Q4_score_ratio >= quantile(indication_data$Q2_Q4_score_ratio, 0.7), "Q2_Q4_High",
+                                                  ifelse(indication_data$Q2_Q4_score_ratio <= quantile(indication_data$Q2_Q4_score_ratio, 0.3), "Q2_Q4_Low", "Q2_Q4_Intermediate"))
+  
+  # Survival chunk
+  Survival_param_Hu_Q2_Q4_genes_score_all <- c('Sample', 'Q2_Q4_score_ratio_cat', 'OS.time', 'OS.status', 'indication')
+  TCGA_Hu_Q2_Q4_genes_score_surv_all <- subset(indication_data, select = Survival_param_Hu_Q2_Q4_genes_score_all)
+  TCGA_Hu_Q2_Q4_genes_score_surv_all_sub_Q2_Q4_ratio <- subset(TCGA_Hu_Q2_Q4_genes_score_surv_all, Q2_Q4_score_ratio_cat %in% c('Q2_Q4_High', 'Q2_Q4_Low'))
+  
+  # Create survival table
+  Survival_table <- survfit(Surv(OS.time, OS.status) ~ Q2_Q4_score_ratio_cat, data=TCGA_Hu_Q2_Q4_genes_score_surv_all_sub_Q2_Q4_ratio)
+  
+  # Plot survival
+  strata <- c("Hi", "Lo")
+  counts <- Survival_table$n
+  group_counts <- setNames(counts, strata)
+  legend_labels <- paste(names(group_counts), " (n=", group_counts, ")", sep = "")
+  plot <- ggsurvplot(Survival_table, conf.int = FALSE, surv.size = 1.2, xlab = 'Days', ylab = 'Survival', legend.title = "",
+                     ylim = c(0, NA), xlim = c(0, 2000), break.x.by = 500, palette = c('red', 'purple'), legend.labs = legend_labels,
+                     pval = TRUE) + ggtitle(paste("Survival of", indic))
+  
+  # Add the plot to the list
+  plots_list[[indic]] <- plot
+  
+}
+
+# Extract ggplot part from each ggsurvplot object
+ggplots_list <- lapply(plots_list, function(plot) plot$plot)
+
+# Arrange ggplots using grid.arrange
+grid_plot <- grid.arrange(grobs = ggplots_list, ncol = 4)
+
+pdf("~/Downloads/Q2_Q4_ratio_TCGA_survival_INDICATIONS_n_70_30.pdf", width = 16, height = 14, useDingbats = F)
+grid_plot <- grid.arrange(grobs = ggplots_list, ncol = 4)
+dev.off()
+
+# Sig1_prog vs Sig3_term ####
+
+TCGA_data_trans = read.csv("~/Downloads/TCGA_sub_data_Arja_Sig1_Sig3.csv", header = TRUE, check.names = FALSE)
+rownames(TCGA_data_trans) <- TCGA_data_trans$Sample
+
+Sig1_prog <- c(
+  'Crtam',
+  'Cxcr5',
+  'Ifi204',
+  'Mnda',
+  'Tnfsf4',
+  'Tcf7')
+
+Sig3_term <- c("AAK1",
+               "ABCB9",
+               "ABI3",
+               "BTBD11",
+               "ADAM8",
+               "AP5B1",
+               "APLP1",
+               "APPL2",
+               "ARHGAP10",
+               "CCRL2",
+               "CD160",
+               "CD200R1",
+               "CD38",
+               "CD7",
+               "CELA1",
+               "CKB",
+               "CHST2",
+               "CIPC",
+               "CORO2A",
+               "CRIM1",
+               "CYSLTR2",
+               "DTX4",
+               "DUSP6",
+               "FAM102A",
+               "ENPP5",
+               "ETV3",
+               "FAM78A",
+               "GADD45B",
+               "GDF11",
+               "GLCCI1",
+               "GLRX",
+               "HIC1",
+               "IL12RB1",
+               "IL21R",
+               "ITIH5",
+               "KCNA3",
+               "KLK8",
+               "L3MBTL3",
+               "LITAF",
+               "LPAR6",
+               "NEDD9",
+               "PADI2",
+               "PDCD1",
+               "PDE4B",
+               "PDE7A",
+               "PDGFB",
+               "PELO",
+               "PGLYRP2",
+               "PIK3AP1",
+               "PPP1R16B",
+               "PTGER4",
+               "RET",
+               "RGS1",
+               "RGS3",
+               "RUNDC3B",
+               "SELENON",
+               "SH2D2A",
+               "SLC16A6",
+               "SLC22A15",
+               "SLC39A6",
+               "SNAI3",
+               "SOAT2",
+               "SRBD1",
+               "ST14",
+               "SYNE2",
+               "TMEM135",
+               "TMEM140",
+               "TNFSF10",
+               "WBP1",
+               "ZBTB38")
+
+Sig1_prog <- toupper(Sig1_prog)
+Sig1_prog[!Sig1_prog %in% colnames(TCGA_data_trans)]
+Sig1_prog <- Sig1_prog[-3]
+
+## Percentile scores ####
+
+# Subset data based on genes from signature
+Sig1_prog_exp <- subset(TCGA_data_trans, select = Sig1_prog)
+Sig1_prog_exp_log <- as.data.frame(lapply(Sig1_prog_exp, function(x) log10(x + 1)))
+# Calculate percentiles for each gene across samples
+Sig1_prog_percentiles <- apply(Sig1_prog_exp_log, 2, function(x) ecdf(x)(x) * 100)
+# Calculate the gene signature score for each sample (average of percentiles)
+Sig1_prog_score_percentiles <- rowMeans(Sig1_prog_percentiles)
+# Apply to original data table
+TCGA_data_trans$Sig1_prog_score_percentiles <- Sig1_prog_score_percentiles
+# Survival code
+TCGA_data_trans$Sig1_prog_score_cat <- ifelse(TCGA_data_trans$Sig1_prog_score_percentiles >= quantile(TCGA_data_trans$Sig1_prog_score_percentiles, 0.7), "Sig1_prog_High",
+                                              ifelse(TCGA_data_trans$Sig1_prog_score_percentiles <= quantile(TCGA_data_trans$Sig1_prog_score_percentiles, 0.3), "Sig1_prog_Low", "Sig1_prog_Intermediate"))
+
+# Subset data based on genes from signature
+Sig3_term_exp <- subset(TCGA_data_trans, select = Sig3_term)
+Sig3_term_exp_log <- as.data.frame(lapply(Sig3_term_exp, function(x) log10(x + 1)))
+# Calculate percentiles for each gene across samples
+Sig3_term_percentiles <- apply(Sig3_term_exp_log, 2, function(x) ecdf(x)(x) * 100)
+# Calculate the gene signature score for each sample (average of percentiles)
+Sig3_term_score_percentiles <- rowMeans(Sig3_term_percentiles)
+# Apply to original data table
+TCGA_data_trans$Sig3_term_score_percentiles <- Sig3_term_score_percentiles
+# Survival code
+TCGA_data_trans$Sig3_term_score_cat <- ifelse(TCGA_data_trans$Sig3_term_score_percentiles >= quantile(TCGA_data_trans$Sig3_term_score_percentiles, 0.7), "Sig3_term_High",
+                                              ifelse(TCGA_data_trans$Sig3_term_score_percentiles <= quantile(TCGA_data_trans$Sig3_term_score_percentiles, 0.3), "Sig3_term_Low", "Sig3_term_Intermediate"))
+
+# Make ratio, ratio_cat and gate
+TCGA_data_trans$Sig1_prog_Sig3_term_score_ratio <- TCGA_data_trans$Sig1_prog_score_percentiles / TCGA_data_trans$Sig3_term_score_percentiles
+
+TCGA_data_trans$Sig1_prog_Sig3_term_score_ratio_cat <- ifelse(TCGA_data_trans$Sig1_prog_Sig3_term_score_ratio >= quantile(TCGA_data_trans$Sig1_prog_Sig3_term_score_ratio, 0.7), "Sig1_prog_Sig3_term_High",
+                                                              ifelse(TCGA_data_trans$Sig1_prog_Sig3_term_score_ratio <= quantile(TCGA_data_trans$Sig1_prog_Sig3_term_score_ratio, 0.3), "Sig1_prog_Sig3_term_Low", "Sig1_prog_Sig3_term_Intermediate"))
+
+pdf("~/Downloads/Sig1_vs_Sig3_binning.pdf", width = 6, height = 3, useDingbats = F)
+ggplot(TCGA_data_trans, aes(x=Sig1_prog_score_percentiles, y=Sig3_term_score_percentiles, color = Sig1_prog_Sig3_term_score_ratio_cat)) +
+  geom_point() + theme_bw() + scale_colour_manual(values = c('cyan4', 'grey', 'darkorange'))
+dev.off()
+
+## Survival chunk ####
+Survival_param_Hu_Sig1_prog_Sig3_term_genes_score_all <- c('Sample', 'Sig1_prog_Sig3_term_score_ratio_cat', 'Sig1_prog_score_cat', 'Sig3_term_score_cat', 'OS.time', 'OS.status', 'indication')
+TCGA_Hu_Sig1_prog_Sig3_term_genes_score_surv_all <- subset(TCGA_data_trans, select = Survival_param_Hu_Sig1_prog_Sig3_term_genes_score_all)
+TCGA_Hu_Sig1_prog_Sig3_term_genes_score_surv_all_sub_Sig1_prog <- subset(TCGA_Hu_Sig1_prog_Sig3_term_genes_score_surv_all, Sig1_prog_score_cat %in% c('Sig1_prog_High', 'Sig1_prog_Low'))
+TCGA_Hu_Sig1_prog_Sig3_term_genes_score_surv_all_sub_Sig3_term <- subset(TCGA_Hu_Sig1_prog_Sig3_term_genes_score_surv_all, Sig3_term_score_cat %in% c('Sig3_term_High', 'Sig3_term_Low'))
+TCGA_Hu_Sig1_prog_Sig3_term_genes_score_surv_all_sub_Sig1_prog_Sig3_term_ratio <- subset(TCGA_Hu_Sig1_prog_Sig3_term_genes_score_surv_all, Sig1_prog_Sig3_term_score_ratio_cat %in% c('Sig1_prog_Sig3_term_High', 'Sig1_prog_Sig3_term_Low'))
+
+Survival_table_TCGA_Hu_Sig1_prog_lo_genes_score_all_Sig1_prog <- survfit(Surv(OS.time, OS.status) ~ Sig1_prog_score_cat, data=TCGA_Hu_Sig1_prog_Sig3_term_genes_score_surv_all_sub_Sig1_prog)
+Survival_table_TCGA_Hu_Sig1_prog_lo_genes_score_all_Sig3_term <- survfit(Surv(OS.time, OS.status) ~ Sig3_term_score_cat, data=TCGA_Hu_Sig1_prog_Sig3_term_genes_score_surv_all_sub_Sig3_term)
+Survival_table_TCGA_Hu_Sig1_prog_lo_genes_score_all_Sig1_prog_Sig3_term_ratio <- survfit(Surv(OS.time, OS.status) ~ Sig1_prog_Sig3_term_score_ratio_cat, data=TCGA_Hu_Sig1_prog_Sig3_term_genes_score_surv_all_sub_Sig1_prog_Sig3_term_ratio)
+
+## Sig1 survival ####
+strata <- names(Survival_table_TCGA_Hu_Sig1_prog_lo_genes_score_all_Sig1_prog$strata)
+counts <- Survival_table_TCGA_Hu_Sig1_prog_lo_genes_score_all_Sig1_prog$n
+group_counts <- setNames(counts, strata)
+legend_labels <- paste(names(group_counts), " (n=", group_counts, ")", sep = "")
+
+pdf("~/Downloads/Sig1_prog_TCGA_survival_ALL.pdf", width = 10, height = 8, useDingbats = F)
+ggsurvplot(Survival_table_TCGA_Hu_Sig1_prog_lo_genes_score_all_Sig1_prog, conf.int = FALSE, surv.size = 1.2, xlab = 'Days', ylab = 'Survival', legend.title = "",
+           ylim = c(0, NA), xlim = c(0,3000), break.x.by = 500, palette = c('cyan4', 'slategray2'), legend.labs = legend_labels, pval = T) +
+  ggtitle("TCGA survival of Sig1_prog high vs low")
+dev.off()
+
+## Sig3 survival ####
+strata <- names(Survival_table_TCGA_Hu_Sig1_prog_lo_genes_score_all_Sig3_term$strata)
+counts <- Survival_table_TCGA_Hu_Sig1_prog_lo_genes_score_all_Sig3_term$n
+group_counts <- setNames(counts, strata)
+legend_labels <- paste(names(group_counts), " (n=", group_counts, ")", sep = "")
+
+pdf("~/Downloads/Sig3_term_TCGA_survival_ALL.pdf", width = 10, height = 8, useDingbats = F)
+ggsurvplot(Survival_table_TCGA_Hu_Sig1_prog_lo_genes_score_all_Sig3_term, conf.int = FALSE, surv.size = 1.2, xlab = 'Days', ylab = 'Survival', legend.title = "",
+           ylim = c(0, NA), xlim = c(0,3000), break.x.by = 500, palette = c('darkorange', 'gold4'), legend.labs = legend_labels, pval = T) +
+  ggtitle("TCGA survival of Sig3_term high vs low")
+dev.off()
+
+## Sig1_Sig3 ratio survival ####
+strata <- names(Survival_table_TCGA_Hu_Sig1_prog_lo_genes_score_all_Sig1_prog_Sig3_term_ratio$strata)
+counts <- Survival_table_TCGA_Hu_Sig1_prog_lo_genes_score_all_Sig1_prog_Sig3_term_ratio$n
+group_counts <- setNames(counts, strata)
+legend_labels <- paste(names(group_counts), " (n=", group_counts, ")", sep = "")
+
+pdf("~/Downloads/Sig1_prog_Sig3_term_ratio_TCGA_survival_ALL.pdf", width = 10, height = 8, useDingbats = F)
+ggsurvplot(Survival_table_TCGA_Hu_Sig1_prog_lo_genes_score_all_Sig1_prog_Sig3_term_ratio, conf.int = FALSE, surv.size = 1.2, xlab = 'Days', ylab = 'Survival', legend.title = "",
+           ylim = c(0, NA), xlim = c(0,3000), break.x.by = 500, palette = c('cyan4', 'darkorange'), legend.labs = legend_labels, pval = T) +
+  ggtitle("TCGA survival of Sig1_prog vs Sig3_term ratio")
+dev.off()
+
+# CD101_lo vs CD101_hi stuff ####
+
+TCGA_data_trans = read.csv("~/Downloads/TCGA_sub_data_Arja_CD101_lo_hi.csv", header = TRUE, check.names = FALSE)
+rownames(TCGA_data_trans) <- TCGA_data_trans$Sample
+
+CD101_genes = read.csv("~/Downloads/Hudson_FigS2_compiled.csv", header = TRUE, check.names = FALSE)
+
+CD101_hi_genes <- CD101_genes$`Cd101+Tim3+`
+CD101_lo_genes <- CD101_genes$`Cd101-Tim3+`
+
+CD101_hi_genes <- toupper(CD101_hi_genes)
+CD101_lo_genes <- toupper(CD101_lo_genes)
+
+CD101_hi_genes[!CD101_hi_genes %in% colnames(TCGA_data_trans)]
+CD101_lo_genes[!CD101_lo_genes %in% colnames(TCGA_data_trans)]
+
+CD101_hi_genes <- CD101_hi_genes[CD101_hi_genes %in% colnames(TCGA_data_trans)]
+CD101_lo_genes <- CD101_lo_genes[CD101_lo_genes %in% colnames(TCGA_data_trans)]
+
+## Percentile scores ####
+
+# Subset data based on genes from signature
+CD101_lo_exp <- subset(TCGA_data_trans, select = CD101_lo_genes)
+CD101_lo_exp_log <- as.data.frame(lapply(CD101_lo_exp, function(x) log10(x + 1)))
+# Calculate percentiles for each gene across samples
+CD101_lo_percentiles <- apply(CD101_lo_exp_log, 2, function(x) ecdf(x)(x) * 100)
+# Calculate the gene signature score for each sample (average of percentiles)
+CD101_lo_score_percentiles <- rowMeans(CD101_lo_percentiles)
+# Apply to original data table
+TCGA_data_trans$CD101_lo_score_percentiles <- CD101_lo_score_percentiles
+# Survival code
+TCGA_data_trans$CD101_lo_score_cat <- ifelse(TCGA_data_trans$CD101_lo_score_percentiles >= quantile(TCGA_data_trans$CD101_lo_score_percentiles, 0.7), "CD101_lo_High",
+                                             ifelse(TCGA_data_trans$CD101_lo_score_percentiles <= quantile(TCGA_data_trans$CD101_lo_score_percentiles, 0.3), "CD101_lo_Low", "CD101_lo_Intermediate"))
+
+# Subset data based on genes from signature
+CD101_hi_exp <- subset(TCGA_data_trans, select = CD101_hi_genes)
+CD101_hi_exp_log <- as.data.frame(lapply(CD101_hi_exp, function(x) log10(x + 1)))
+# Calculate percentiles for each gene across samples
+CD101_hi_percentiles <- apply(CD101_hi_exp_log, 2, function(x) ecdf(x)(x) * 100)
+# Calculate the gene signature score for each sample (average of percentiles)
+CD101_hi_score_percentiles <- rowMeans(CD101_hi_percentiles)
+# Apply to original data table
+TCGA_data_trans$CD101_hi_score_percentiles <- CD101_hi_score_percentiles
+# Survival code
+TCGA_data_trans$CD101_hi_score_cat <- ifelse(TCGA_data_trans$CD101_hi_score_percentiles >= quantile(TCGA_data_trans$CD101_hi_score_percentiles, 0.7), "CD101_hi_High",
+                                             ifelse(TCGA_data_trans$CD101_hi_score_percentiles <= quantile(TCGA_data_trans$CD101_hi_score_percentiles, 0.3), "CD101_hi_Low", "CD101_hi_Intermediate"))
+
+# Make ratio and ratio_cat
+TCGA_data_trans$CD101_lo_CD101_hi_score_ratio <- TCGA_data_trans$CD101_lo_score_percentiles / TCGA_data_trans$CD101_hi_score_percentiles
+
+TCGA_data_trans$CD101_lo_CD101_hi_score_ratio_cat <- ifelse(TCGA_data_trans$CD101_lo_CD101_hi_score_ratio >= quantile(TCGA_data_trans$CD101_lo_CD101_hi_score_ratio, 0.7), "CD101_lo_CD101_hi_High",
+                                                            ifelse(TCGA_data_trans$CD101_lo_CD101_hi_score_ratio <= quantile(TCGA_data_trans$CD101_lo_CD101_hi_score_ratio, 0.3), "CD101_lo_CD101_hi_Low", "CD101_lo_CD101_hi_Intermediate"))
+
+pdf("~/Downloads/CD101_hi_vs_CD101_lo_binning.pdf", width = 6, height = 3, useDingbats = F)
+ggplot(TCGA_data_trans, aes(x=CD101_lo_score_percentiles, y=CD101_hi_score_percentiles, color = CD101_lo_CD101_hi_score_ratio_cat)) + 
+  geom_point() + theme_bw() + scale_colour_manual(values = c('seagreen', 'grey', 'hotpink'))
+dev.off()
+
+## Survival chunk ####
+Survival_param_Hu_CD101_lo_CD101_hi_genes_score_all <- c('Sample', 'CD101_lo_CD101_hi_score_ratio_cat', 'CD101_lo_score_cat', 'CD101_hi_score_cat', 'OS.time', 'OS.status', 'indication')
+TCGA_Hu_CD101_lo_CD101_hi_genes_score_surv_all <- subset(TCGA_data_trans, select = Survival_param_Hu_CD101_lo_CD101_hi_genes_score_all)
+TCGA_Hu_CD101_lo_CD101_hi_genes_score_surv_all_sub_CD101_lo <- subset(TCGA_Hu_CD101_lo_CD101_hi_genes_score_surv_all, CD101_lo_score_cat %in% c('CD101_lo_High', 'CD101_lo_Low'))
+TCGA_Hu_CD101_lo_CD101_hi_genes_score_surv_all_sub_CD101_hi <- subset(TCGA_Hu_CD101_lo_CD101_hi_genes_score_surv_all, CD101_hi_score_cat %in% c('CD101_hi_High', 'CD101_hi_Low'))
+TCGA_Hu_CD101_lo_CD101_hi_genes_score_surv_all_sub_CD101_lo_CD101_hi_ratio <- subset(TCGA_Hu_CD101_lo_CD101_hi_genes_score_surv_all, CD101_lo_CD101_hi_score_ratio_cat %in% c('CD101_lo_CD101_hi_High', 'CD101_lo_CD101_hi_Low'))
+
+Survival_table_TCGA_Hu_CD101_lo_lo_genes_score_all_CD101_lo <- survfit(Surv(OS.time, OS.status) ~ CD101_lo_score_cat, data=TCGA_Hu_CD101_lo_CD101_hi_genes_score_surv_all_sub_CD101_lo)
+Survival_table_TCGA_Hu_CD101_lo_lo_genes_score_all_CD101_hi <- survfit(Surv(OS.time, OS.status) ~ CD101_hi_score_cat, data=TCGA_Hu_CD101_lo_CD101_hi_genes_score_surv_all_sub_CD101_hi)
+Survival_table_TCGA_Hu_CD101_lo_lo_genes_score_all_CD101_lo_CD101_hi_ratio <- survfit(Surv(OS.time, OS.status) ~ CD101_lo_CD101_hi_score_ratio_cat, data=TCGA_Hu_CD101_lo_CD101_hi_genes_score_surv_all_sub_CD101_lo_CD101_hi_ratio)
+
+## CD101_lo survival ####
+strata <- names(Survival_table_TCGA_Hu_CD101_lo_lo_genes_score_all_CD101_lo$strata)
+counts <- Survival_table_TCGA_Hu_CD101_lo_lo_genes_score_all_CD101_lo$n
+group_counts <- setNames(counts, strata)
+legend_labels <- paste(names(group_counts), " (n=", group_counts, ")", sep = "")
+
+pdf("~/Downloads/CD101_lo_TCGA_survival_ALL.pdf", width = 10, height = 8, useDingbats = F)
+ggsurvplot(Survival_table_TCGA_Hu_CD101_lo_lo_genes_score_all_CD101_lo, conf.int = FALSE, surv.size = 1.2, xlab = 'Days', ylab = 'Survival', legend.title = "",
+           ylim = c(0, NA), xlim = c(0,3000), break.x.by = 500, palette = c('seagreen', 'darkolivegreen3'), legend.labs = legend_labels, pval = T) +
+  ggtitle("TCGA survival of CD101_lo high vs low")
+dev.off()
+
+## CD101_hi survival ####
+strata <- names(Survival_table_TCGA_Hu_CD101_lo_lo_genes_score_all_CD101_hi$strata)
+counts <- Survival_table_TCGA_Hu_CD101_lo_lo_genes_score_all_CD101_hi$n
+group_counts <- setNames(counts, strata)
+legend_labels <- paste(names(group_counts), " (n=", group_counts, ")", sep = "")
+
+pdf("~/Downloads/CD101_hi_TCGA_survival_ALL.pdf", width = 10, height = 8, useDingbats = F)
+ggsurvplot(Survival_table_TCGA_Hu_CD101_lo_lo_genes_score_all_CD101_hi, conf.int = FALSE, surv.size = 1.2, xlab = 'Days', ylab = 'Survival', legend.title = "",
+           ylim = c(0, NA), xlim = c(0,3000), break.x.by = 500, palette = c('hotpink', 'rosybrown1'), legend.labs = legend_labels, pval = T) +
+  ggtitle("TCGA survival of CD101_hi high vs low")
+dev.off()
+
+## CD101_lo_hi ratio survival ####
+strata <- names(Survival_table_TCGA_Hu_CD101_lo_lo_genes_score_all_CD101_lo_CD101_hi_ratio$strata)
+counts <- Survival_table_TCGA_Hu_CD101_lo_lo_genes_score_all_CD101_lo_CD101_hi_ratio$n
+group_counts <- setNames(counts, strata)
+legend_labels <- paste(names(group_counts), " (n=", group_counts, ")", sep = "")
+
+pdf("~/Downloads/CD101_lo_CD101_hi_ratio_TCGA_survival_ALL.pdf", width = 10, height = 8, useDingbats = F)
+ggsurvplot(Survival_table_TCGA_Hu_CD101_lo_lo_genes_score_all_CD101_lo_CD101_hi_ratio, conf.int = FALSE, surv.size = 1.2, xlab = 'Days', ylab = 'Survival', legend.title = "",
+           ylim = c(0, NA), xlim = c(0,3000), break.x.by = 500, palette = c('seagreen', 'hotpink'), legend.labs = legend_labels, pval = T) +
+  ggtitle("TCGA survival of CD101_lo vs CD101_hi ratio")
+dev.off()
