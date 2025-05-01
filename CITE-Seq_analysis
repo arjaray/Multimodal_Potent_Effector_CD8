@@ -11,7 +11,7 @@ library(RColorBrewer)
 library(pheatmap)
 library(Seurat)
 
-
+# starting with a pre-processed seurat object. For pre-processing details, refer to Rahim et al., 2023 and Combes et al., 2022 pipeline
 
 T1 <- IPIPOOL004.P1.scrna.CD45_enriched
 
