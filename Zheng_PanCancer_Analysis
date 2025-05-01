@@ -1,0 +1,310 @@
+## Pan-cancer Zheng et al. atlas analysis code for Ray et al.,: 
+## Multimodal delineation of a layer of effector function among exhausted CD8 T cells in tumors
+
+# Starting with a pre-processed seurat object (cd8.int.seu) from the original Zheng et al. publication curarted and 
+# generously shared by Dr. Miguel Reina-Campos
+
+library(ggplot2)     # For pretty plots
+library(dplyr)       # For inline modification of matrices
+library(grid)        # For plotting multiple plots in one frame
+library(gridExtra)   # For plotting multiple plots in one frame
+library(reshape2)    # For "melting" dataframesb
+library(scales)      # To access break formatting functions
+library(reshape)
+library(ggrepel)
+library(RColorBrewer)
+library(pheatmap)
+library(Seurat)
+library(readr)
+library (R.utils)
+library(patchwork)
+library(ggpubr)
+library(corrplot)
+
+
+Exhaustion_list <- c('AKAP5', 'TOX', 'NUSAP1', 'AFAP1L2', 'CBLB', 'LAG3', 'SYT11', 'TNFRSF9', 'TNFSF4', 'HAVCR2', 'FUT8') # from Bengsch et al., 2018 and Combes et al., 2022
+Naive_list <- c('TCF7', 'LEF1', 'CCR7', 'SELL', 'IL7R')
+
+Q2_Q4_top_20 <- read.csv(file = 'CITESeq_Q2_Q4_top20.csv')
+Q2_Q4_bot_20 <- read.csv(file = 'CITESeq_Q2_Q4_bot20.csv')
+
+Q2_pos <- c('CD69', 'CCL4L2', 'FOS', 'HSPA1B', 'DNAJB1', 'DUSP1', 'JUN', 'HSPA1A', 'KLF6', 'NFKBIA', 'JUNB', 'NR4A1') # removing CCL4 (non-finite values)
+Q4_pos <- c('CD74', 'COTL1', 'ACTG1', 'PFN1', 'ACTB', 'GAPDH')
+
+# Function to add ensemble expression scores
+
+ensemble_score_originalexp <- function (genes, object){
+  # genes :vector of gene names
+  # object: seurat object
+  noofgenes = length (genes)
+  noofcells = length (colnames(object))
+  perc_score <- array (dim = c(noofgenes, noofcells))
+  ens_score <- vector (length = noofcells)
+  for (i in 1: noofgenes){  # iterating over genelist
+    current_gene <- genes[i]
+    current = as.vector(object@assays$originalexp[current_gene]) # gets expression for all cells of the current gene in a vector
+    current <- current %>% replace(is.na(.), 0)
+    current_ordered = sort (current, decreasing = TRUE)
+    for (j in 1:noofcells){
+      current_exp = current [j]
+      if (current_exp > 0){
+        for (k in 1: noofcells) {
+          if (current_exp >= current_ordered [k]) {
+            percentile = (1-k/noofcells)*100
+            break
+          }
+        }
+        perc_score [i, j] = percentile 
+      }
+      else {
+        perc_score [i, j] = 0
+      }
+    }    
+  }    
+  ens_score <- colMeans(perc_score)
+}
+
+
+cd8.int.seu$Exhaustion_score <- ensemble_score_originalexp(Exhaustion_list, cd8.int.seu)
+cd8.int.seu$Naive_score <- ensemble_score_originalexp(Naive_list, cd8.int.seu)
+cd8.int.seu$Q2_pos <- ensemble_score_originalexp(Q2_pos, cd8.int.seu)
+cd8.int.seu$Q4_pos <- ensemble_score_originalexp(Q4_pos, cd8.int.seu)
+
+#for ratios, adding a nominal non-zero constant to avoid undefined quantities
+
+cd8.int.seu$Q2_pos_plus <- cd8.int.seu$Q2_pos + 0.001
+cd8.int.seu$Q4_pos_plus <- cd8.int.seu$Q4_pos + 0.001
+cd8.int.seu$Q2byQ4 <- cd8.int.seu$Q2_pos_plus/cd8.int.seu$Q4_pos_plus
+
+pdf('New_DimPlot_CD8.pdf', width = 8, height = 6)
+DimPlot(cd8.int.seu, group.by = 'meta.cluster')
+dev.off()
+
+# add other signatures from Beltra, Hudson to compare and correlate
+# some genes have NaNs, these have been replaced with zeros
+
+Beltra_Sig1_list <- c('CRTAM', 'MNDA', 'TNFSF4', 'TCF7', 'CXCR5') 
+Beltra_Sig7_list <- c('AAK1', 'ABCB9','ABI3','BTBD11', 'ADAM8', 'AP5B1', 'APLP1', 'APPL2', 'ARHGAP10', 'CCRL2', 'CD160', 'CD200R1',
+                      'CD38', 'CD7', 'CELA1', 'CKB', 'CHST2', 'CIPC', 'CORO2A', 'CRIM1', 'CYSLTR2', 'DTX4', 'DUSP6', 'FAM102A', 'ENPP5', 'ETV3', 'FAM78A', 'GADD45B',
+                      'GDF11', 'GLCCI1', 'GLRX', 'HIC1', 'IL12RB1', 'IL21R', 'ITIH5', 'KCNA3', 'KLK8', 'L3MBTL3', 'LITAF', 'LPAR6', 'NEDD9', 'PADI2', 'PDCD1', 'PDE4B', 'PDE7A',
+                      'PDGFB', 'PELO', 'PGLYRP2', 'PIK3AP1', 'PPP1R16B', 'PTGER4', 'RET', 'RGS1', 'RGS3', 'RUNDC3B', 'SEPN1', 'SH2D2A', 'SLC16A6', 'SLC22A15', 'SLC39A6', 'SNAI3', 
+                      'SOAT2', 'SRBD', 'ST14', 'SYNE2', 'TMEM135','TMEM140', 'TNFSF10', 'WBP1', 'ZBTB38')
+Beltra_Sig7_list[!Beltra_Sig7_list %in% (rownames(cd8.int.seu))] #which genes are not in the current dataset
+#  "APLP1"    "CKB"      "DTX4"     "HIC1"     "ITIH5"    "KLK8"     "PADI2"    "RET"      "SEPN1"    "SLC22A15" "SOAT2"    "SRBD"     "ST14"    
+
+Beltra_Sig7_list <- Beltra_Sig7_list[Beltra_Sig7_list %in% (rownames(cd8.int.seu))]
+# final list  "AAK1"     "ABCB9"    "ABI3"     "BTBD11"   "ADAM8"    "AP5B1"    "APPL2"    "ARHGAP10" "CCRL2"    "CD160"   
+# "CD200R1"  "CD38"     "CD7"      "CELA1"    "CHST2"    "CIPC"     "CORO2A"   "CRIM1"    "CYSLTR2"  "DUSP6"   
+# "FAM102A"  "ENPP5"    "ETV3"     "FAM78A"   "GADD45B"  "GDF11"    "GLCCI1"   "GLRX"     "IL12RB1"  "IL21R"   
+# "KCNA3"    "L3MBTL3"  "LITAF"    "LPAR6"    "NEDD9"    "PDCD1"    "PDE4B"    "PDE7A"    "PDGFB"    "PELO"    
+# "PGLYRP2"  "PIK3AP1"  "PPP1R16B" "PTGER4"   "RGS1"     "RGS3"     "RUNDC3B"  "SH2D2A"   "SLC16A6"  "SLC39A6" 
+# "SNAI3"    "SYNE2"    "TMEM135"  "TMEM140"  "TNFSF10"  "WBP1"     "ZBTB38"  
+
+Hudson_Cd101pos_list <- c('CD101', 'CCDC136', 'ASB2', 'CSF1',
+                          'FCRL6', 'CD7', 'NMUR1', 'PLEKHG1', 'PIP5K1B', 'CDH1', 'PDZD2', 'CITED4') # removing HEYL, RTN1, HTRA3, OSGIN1 d.n. exist;
+
+Hudson_Cd101neg_list[!Hudson_Cd101neg_list %in% (rownames(cd8.int.seu))] #  "KCNJ8"     "CCL9"      "EMP1"      "TPP3"      "CMAH"      "OVOL2"     "LRRC75B"   "EVPL"      "KLRA9"    
+# "SERPINB9B" "CDC42EP1"  "KLRB1C"   d.n. exist
+
+Hudson_Cd101neg_list <- Hudson_Cd101neg_list[Hudson_Cd101neg_list %in% (rownames(cd8.int.seu))]
+# final list "S1PR5"    "CD109"    "IL18RAP"  "TUBB3"    "PDLIM1"   "ANXA1"    "NHSL2"    "TNFRSF25" "LMNA"     "CX3CR1"   "EPS8"     "FAM129B" 
+
+
+cd8.int.seu$Beltra_Sig1_score <- ensemble_score_originalexp (Beltra_Sig1_list, cd8.int.seu)
+cd8.int.seu$Beltra_Sig7_score <- ensemble_score_originalexp (Beltra_Sig7_list, cd8.int.seu)
+cd8.int.seu$Hudson_Cd101pos_score <- ensemble_score_originalexp (Hudson_Cd101pos_list, cd8.int.seu)
+cd8.int.seu$Hudson_Cd101neg_score <- ensemble_score_originalexp (Hudson_Cd101neg_list, cd8.int.seu)
+
+#correlation among these scores
+
+write.csv(t(rbind(cd8.int.seu$Q2_pos, cd8.int.seu$Q4_pos, cd8.int.seu$Beltra_Sig1_score, 
+                  cd8.int.seu$Beltra_Sig7_score, cd8.int.seu$Hudson_Cd101neg_score, cd8.int.seu$Hudson_Cd101pos_score)),
+          file = 'scores.csv')
+
+scores <- t(rbind(cd8.int.seu$Q2_pos, cd8.int.seu$Q4_pos, cd8.int.seu$Beltra_Sig1_score, 
+                  cd8.int.seu$Beltra_Sig7_score, cd8.int.seu$Hudson_Cd101neg_score, cd8.int.seu$Hudson_Cd101pos_score))
+colnames(scores) <- c('Q2', 'Q4', 'S1', 'S7', '101neg', '101pos')
+rownames(scores) <- NULL
+
+matrix <- cor(scores, method = 'spearman')
+
+pdf('All_Signatures_Correlation_PanCan_CD8.pdf', width = 8, height = 8)
+corrplot(
+  matrix,
+  method = "color",
+  type = "upper",
+  tl.cex = 0.8,
+  tl.col = "black",
+  tl.srt = 45,
+  addCoef.col = "black",
+  title = "Spearman Correlation Heatmap"
+)
+dev.off()
+
+#individual pairwise correlations
+
+Spear_Q2_Q4 <- cor.test(cd8.int.seu$Q2_pos, cd8.int.seu$Q4_pos, method = 'spearman')
+Spear_Q2_Sig1 <- cor.test(cd8.int.seu$Q2_pos, cd8.int.seu$Beltra_Sig1_score, method = 'spearman')
+Spear_Q2_Sig7 <- cor.test(cd8.int.seu$Q2_pos, cd8.int.seu$Beltra_Sig7_score, method = 'spearman')
+Spear_Q4_Sig1 <- cor.test(cd8.int.seu$Q4_pos, cd8.int.seu$Beltra_Sig1_score, method = 'spearman')
+Spear_Q4_Sig7 <- cor.test(cd8.int.seu$Q4_pos, cd8.int.seu$Beltra_Sig7_score, method = 'spearman')
+Spear_Sig1_Sig7 <- cor.test(cd8.int.seu$Beltra_Sig1_score, cd8.int.seu$Beltra_Sig7_score, method = 'spearman')
+Spear_Q2_Cd101neg <- cor.test(cd8.int.seu$Q2_pos, cd8.int.seu$Hudson_Cd101neg_score, method = 'spearman')
+Spear_Q4_Cd101neg <- cor.test(cd8.int.seu$Q4_pos, cd8.int.seu$Hudson_Cd101neg_score, method = 'spearman')
+Spear_Sig1_Cd101neg <- cor.test(cd8.int.seu$Beltra_Sig1_score, cd8.int.seu$Hudson_Cd101neg_score, method = 'spearman')
+Spear_Sig7_Cd101neg <- cor.test(cd8.int.seu$Beltra_Sig7_score, cd8.int.seu$Hudson_Cd101neg_score, method = 'spearman')
+Spear_Cd101pos_Cd101neg <- cor.test(cd8.int.seu$Hudson_Cd101pos_score, cd8.int.seu$Hudson_Cd101neg_score, method = 'spearman')
+Spear_Q2_Cd101pos <- cor.test(cd8.int.seu$Q2_pos, cd8.int.seu$Hudson_Cd101pos_score, method = 'spearman')
+Spear_Q4_Cd101pos <- cor.test(cd8.int.seu$Q4_pos, cd8.int.seu$Hudson_Cd101pos_score, method = 'spearman')
+Spear_Sig1_Cd101pos <- cor.test(cd8.int.seu$Beltra_Sig1_score, cd8.int.seu$Hudson_Cd101pos_score, method = 'spearman')
+Spear_Sig7_Cd101pos <- cor.test(cd8.int.seu$Beltra_Sig7_score, cd8.int.seu$Hudson_Cd101pos_score, method = 'spearman')
+
+# values of each score by cluster
+# use these to plot heatmap in Prism
+
+a <- VlnPlot(cd8.int.seu, features = "Naive_score", group.by = "meta.cluster")
+Naive_by_cluster <- aggregate (a$data$`Naive_score`, by =list(a$data$ident), FUN = "median")
+
+a <- VlnPlot(cd8.int.seu, features = "Exhaustion_score", group.by = "meta.cluster")
+Exhaustion_by_cluster <- aggregate (a$data$`Exhaustion_score`, by =list(a$data$ident), FUN = "median")
+
+a <- VlnPlot(cd8.int.seu, features = "Q2_pos", group.by = "meta.cluster")
+Q2_pos_by_cluster <- aggregate (a$data$`Q2_pos`, by =list(a$data$ident), FUN = "median")
+
+a <- VlnPlot(cd8.int.seu, features = "Q4_pos", group.by = "meta.cluster")
+Q4_pos_by_cluster <- aggregate (a$data$`Q4_pos`, by =list(a$data$ident), FUN = "median")
+
+write.csv(c(Naive_by_cluster, Q2_pos_by_cluster, Q4_pos_by_cluster, Exhaustion_by_cluster), file = 'Naive_Q2pos_Q4pos_Exhaustion_by_cluster.csv')
+
+#---------------
+
+#Compare CITE-Seq clusters to Zheng et al. Clusters
+
+deg_Cite <- read.csv('CITESeq_CD8_Cluster_Markers_SCT.csv') # CITE-Seq DEGs for each cluster
+
+#curated list of genes for each CITE-Seq cluster, with non-existent genes in this datset removed
+Eff_1_list <- deg_Cite$gene[deg_Cite$cluster %in% 'Eff-1']
+Eff_1_list <- Eff_1_list[! Eff_1_list %in% c('CCL4')]
+Eff_2_list <- deg_Cite$gene[deg_Cite$cluster %in% 'Eff-2']
+Exh_1_list <- deg_Cite$gene[deg_Cite$cluster %in% 'Intermediate']
+Exh_2_list <- deg_Cite$gene[deg_Cite$cluster %in% 'Eff-Exh']
+Prolif_list <- deg_Cite$gene[deg_Cite$cluster %in% 'Prolif']
+N_list <- deg_Cite$gene[deg_Cite$cluster %in% 'Naive']
+Cxcl2_list <- deg_Cite$gene[deg_Cite$cluster %in% 'Cxcl2+']
+Cxcl2_list <- Cxcl2_list[! Cxcl2_list %in% c('IGFBP7', 'CXCL2', 'COL1A1', 'CCN1')]
+MT_list <- deg_Cite$gene[deg_Cite$cluster %in% 'Metallothionein+']
+#only DEG for CXCL13 Tex cluster is CXCL13
+
+#generate scores  for each CITE-Seq cluster in this Zheng dataset
+
+cd8.int.seu$Eff1_score <- ensemble_score_originalexp (Eff_1_list, cd8.int.seu)
+cd8.int.seu$Eff2_score <- ensemble_score_originalexp (Eff_2_list, cd8.int.seu)
+cd8.int.seu$Exh1_score <- ensemble_score_originalexp (Exh_1_list, cd8.int.seu)
+cd8.int.seu$Exh2_score <- ensemble_score_originalexp (Exh_2_list, cd8.int.seu)
+cd8.int.seu$Prolif_score <- ensemble_score_originalexp (Prolif_list, cd8.int.seu)
+cd8.int.seu$N_score <- ensemble_score_originalexp (N_list, cd8.int.seu)
+cd8.int.seu$Cxcl2_score <- ensemble_score_originalexp (Cxcl2_list, cd8.int.seu)
+cd8.int.seu$MT_score <- ensemble_score_originalexp (MT_list, cd8.int.seu)
+
+Idents(cd8.int.seu) <- 'meta.clusters'
+
+# removing the two outlier/uncharacterized clusters
+cd8.int.seu_main <- subset(cd8.int.seu, subset = meta.cluster %in% c("CD8.c01.Tn.MAL",  "CD8.c02.Tm.IL7R", "CD8.c03.Tm.RPS12",  "CD8.c04.Tm.CD52" ,
+                                                                     "CD8.c05.Tem.CXCR5"  ,  "CD8.c06.Tem.GZMK"  , "CD8.c07.Temra.CX3CR1" , "CD8.c08.Tk.TYROBP",   
+                                                                     "CD8.c09.Tk.KIR2DL4" ,  "CD8.c10.Trm.ZNF683"  , "CD8.c11.Tex.PDCD1"   , "CD8.c12.Tex.CXCL13",
+                                                                     "CD8.c13.Tex.myl12a"  , "CD8.c14.Tex.TCF7"  ,   "CD8.c15.ISG.IFIT1"))
+
+pdf(file = 'DotPlot_CD8_cluster_scores_fromCITESeq_2.pdf', height = 6, width = 6)
+DotPlot(cd8.int.seu_main, features = c('N_score', 'Eff1_score', 'Eff2_score',
+                                       'Exh1_score', 'Exh2_score', 'CXCL13'), cols= 'RdYlBu', group.by = 'meta.cluster',
+        dot.scale = 6) +  theme(axis.text.x=element_text(angle=45, hjust = 1, size = 10),
+                                axis.text.y=element_text(size = 10), text = element_text(size = 14))
+dev.off()
+
+
+#gating using Q2byQ4 ratio
+cd8.int.seu$Q2_Q4_levels4 <- ifelse(cd8.int.seu$Q2byQ4 >=1.56, 'Q2byQ4_high',
+                                    ifelse(cd8.int.seu$Q2byQ4 < 0.6, 'Q2byQ4_low', 'Rest')) # cutting off at the 33 and 67 quantiles
+
+
+cd8.int.seu_c12 <- subset(cd8.int.seu, subset = meta.cluster == 'CD8.c12.Tex.CXCL13')
+cd8.int.seu_c05 <- subset(cd8.int.seu, subset = meta.cluster == 'CD8.c05.Tem.CXCR5')
+cd8.int.seu_c10 <- subset(cd8.int.seu, subset = meta.cluster == 'CD8.c10.Trm.ZNF683')
+
+##----
+
+##----
+## Q2_Q4_levels4 : by Q2byQ4 top and bottom 33%
+
+pdf(file = 'Q2_Q4_Tem_c05_Ratio_33.pdf', height = 6, width = 6)
+VlnPlot(cd8.int.seu_c05, features = 'IFNG', group.by = 'Q2_Q4_levels4', 
+        pt.size = 0, cols = c('red', 'purple', 'grey'))+ 
+  stat_summary(fun = median, geom = 'point', size = 5, colour= 'black', shape = 95)+
+  stat_compare_means(method = 'wilcox.test', ref.group = 'Q2byQ4_high')
+VlnPlot(cd8.int.seu_c05, features = 'TNF', group.by = 'Q2_Q4_levels4', 
+        pt.size = 0, cols = c('red', 'purple', 'grey'))+ 
+  stat_summary(fun = median, geom = 'point', size = 5, colour= 'black', shape = 95)+
+  stat_compare_means(method = 'wilcox.test', ref.group = 'Q2byQ4_high')
+ylim(-1, 2)
+VlnPlot(cd8.int.seu_c05, features = 'Exhaustion_score', group.by = 'Q2_Q4_levels4', 
+        pt.size = 0, cols = c('red', 'purple', 'grey'))+ 
+  stat_summary(fun = median, geom = 'point', size = 5, colour= 'black', shape = 95)+
+  stat_compare_means(method = 'wilcox.test', ref.group = 'Q2byQ4_high')
+dev.off()
+
+# repeat for cd8.int.seu_c12 and cd8.int.seu_c10
+
+##----
+# Beltra Sig1bySig7 ratio
+quantile(cd8.int.seu$Sig1bySig7, probs = c(0.33, 0.67)) 
+# 33%       67% 
+# 0.5023993 1.0924386 
+
+quantile(cd8.int.seu$Hud_NegbyPos, probs = c(0.33, 0.67), na.rm = TRUE) 
+#       33%       67% 
+# 0.6503485 1.4503800 
+
+#gating using Sig1bySig7 ratio
+cd8.int.seu$Sig1bySig7_levels <- ifelse(cd8.int.seu$Sig1bySig7 >=1.09, 'Sig1bySig7_high',
+                                        ifelse(cd8.int.seu$Sig1bySig7 < 0.50, 'Sig1bySig7_low', 'Rest'))
+
+#gating using HudNegbyPos ratio
+cd8.int.seu$Hud_NegbyPos_levels <- ifelse(cd8.int.seu$Hud_NegbyPos >=1.45, 'Hud_NegbyPos_high',
+                                          ifelse(cd8.int.seu$Hud_NegbyPos < 0.65, 'Hud_NegbyPos_low', 'Rest'))
+
+pdf(file = 'Sig1_Sig7_Tem_c05_Ratio_33.pdf', height = 6, width = 6)
+VlnPlot(cd8.int.seu_c05, features = 'IFNG', group.by = 'Sig1bySig7_levels', 
+        pt.size = 0, cols = c('grey', '#00A693', 'darkorange'))+ 
+  stat_summary(fun = median, geom = 'point', size = 5, colour= 'black', shape = 95)+
+  stat_compare_means(method = 'wilcox.test', ref.group = 'Sig1bySig7_high')
+VlnPlot(cd8.int.seu_c05, features = 'TNF', group.by = 'Sig1bySig7_levels', 
+        pt.size = 0, cols = c('grey', '#00A693', 'darkorange'))+ 
+  stat_summary(fun = median, geom = 'point', size = 5, colour= 'black', shape = 95)+
+  stat_compare_means(method = 'wilcox.test', ref.group = 'Sig1bySig7_high')+
+  ylim(-1, 2)
+VlnPlot(cd8.int.seu_c05, features = 'Exhaustion_score', group.by = 'Sig1bySig7_levels', 
+        pt.size = 0, cols = c('grey', '#00A693', 'darkorange'))+ 
+  stat_summary(fun = median, geom = 'point', size = 5, colour= 'black', shape = 95)+
+  stat_compare_means(method = 'wilcox.test', ref.group = 'Sig1bySig7_high')
+dev.off()
+
+
+# repeat for cd8.int.seu_c12 and cd8.int.seu_c10
+
+pdf(file = 'HudNeg_Pos_Tem_c05_Ratio_33.pdf', height = 6, width = 6)
+VlnPlot(cd8.int.seu_c05, features = 'IFNG', group.by = 'Hud_NegbyPos_levels', 
+        pt.size = 0, cols = c('darkgreen', '#F01C9C', 'grey'))+ 
+  stat_summary(fun = median, geom = 'point', size = 5, colour= 'black', shape = 95)+
+  stat_compare_means(method = 'wilcox.test', ref.group = 'Hud_NegbyPos_high')
+VlnPlot(cd8.int.seu_c05, features = 'TNF', group.by = 'Hud_NegbyPos_levels', 
+        pt.size = 0, cols = c('darkgreen', '#F01C9C', 'grey'))+ 
+  stat_summary(fun = median, geom = 'point', size = 5, colour= 'black', shape = 95)+
+  stat_compare_means(method = 'wilcox.test', ref.group = 'Hud_NegbyPos_high')+
+  ylim(-1, 2)
+VlnPlot(cd8.int.seu_c05, features = 'Exhaustion_score', group.by = 'Hud_NegbyPos_levels', 
+        pt.size = 0, cols = c('darkgreen', '#F01C9C', 'grey'))+ 
+  stat_summary(fun = median, geom = 'point', size = 5, colour= 'black', shape = 95)+
+  stat_compare_means(method = 'wilcox.test', ref.group = 'Hud_NegbyPos_high')
+dev.off()
+
+# repeat for cd8.int.seu_c12 and cd8.int.seu_c10
