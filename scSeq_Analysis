@@ -14,10 +14,70 @@ library (monocle3)
 library (R.utils)
 library(patchwork)
 
-##--- # starting with a pre-processed seurat object. For pre-processing details, refer to Hu et al., 2020
+##----------------- create Seurat object from raw data ---------------
 
+pbmc10k.data <- Read10X(data.dir = "~/Krummel lab/20201106_CD69_Reporter/CD69_TFP_FULL/filtered_feature_bc_matrix/")
+pbmc10k <- CreateSeuratObject(counts = pbmc10k.data[["Gene Expression"]], min.cells = 3, min.features = 200)
+pbmc10k <- NormalizeData(pbmc10k)
+pbmc10k[["ADT"]] <- CreateAssayObject(pbmc10k.data[["Antibody Capture"]][1:4, colnames(x = pbmc10k)])
+pbmc_sub <- NormalizeData(pbmc_sub, assay = "ADT", normalization.method = "CLR")
+DefaultAssay(pbmc10k)<-'RNA'
+pbmc10k <- PercentageFeatureSet(pbmc10k, pattern = "^mt-", col.name = "percent.mt")
+VlnPlot(pbmc10k,features = c('nFeature_RNA','nCount_RNA','percent.mt'))
+pbmc10k <- subset(pbmc10k, subset = nFeature_RNA > 200 & percent.mt < 12.5)
+pbmc10k <- HTODemux(pbmc10k, assay = "ADT", positive.quantile = 0.7)
+pbmc_test <- subset(pbmc10k, idents = "Negative", invert = TRUE)
+pbmc_test<-ScaleData(pbmc_test,do.scale=TRUE,do.center = TRUE,assay = "ADT")
+####w scaled data:
+#remove cells where the difference between the highest and 2nd highest ADT is too low - assign as ambig
+adt_counts<-GetAssayData(object = pbmc_test, assay = "ADT",slot = "scale.data")
+pbmc_test@meta.data$ADT_diff_scale=integer(ncol(pbmc_test))
+for (i in 1:ncol(adt_counts)){
+  temp = adt_counts[match(as.character(pbmc_test$ADT_maxID[i]),row.names(adt_counts)),i] -adt_counts[match(as.character(pbmc_test$ADT_secondID[i]),row.names(adt_counts)),i]
+  pbmc_test@meta.data$ADT_diff_scale[i]<-temp
+}
+pbmc_test@meta.data$ADT_diff_sat_scale = ifelse(pbmc_test@meta.data$ADT_diff_scale <0.2,"bad","good")
+DimPlot(pbmc_test,group.by = "ADT_diff_sat")
+hto.dist.mtx <- as.matrix(dist(t(GetAssayData(object = pbmc_test, assay = "ADT"))))
+pbmc_test <- RunTSNE(pbmc_test, distance.matrix = hto.dist.mtx, perplexity = 80)
+DimPlot(pbmc_test,group.by = "ADT_diff_sat")
+#Assigning calls 
+pbmc10k$demux.0.15 =as.character(pbmc10k$hash.ID)
+pbmc10k$demux.0.15[match(colnames(pbmc_test),colnames(pbmc10k))]<-as.character(pbmc_test$ADT_maxID)
+pbmc10k$demux.0.15[match(colnames(pbmc_test)[pbmc_test$ADT_diff_sat=="bad"],colnames(pbmc10k))]="Ambig"
 
+demux_t = subset(pbmc10k, subset = `MULTISEQ_ID_2` %in% c('Doublet','Negative'),invert = TRUE)
+#####TRY STANDARD WORKFLOW, NOT SCT#############################################################################3
+######################################## NO SCT ###################################################################
 
+DefaultAssay(demux_t)<-'RNA'
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+mouse.s.genes = convertHumanGeneList(s.genes)
+mouse.g2m.genes = convertHumanGeneList(g2m.genes)
+demux_t <- CellCycleScoring(demux_t, s.features = mouse.s.genes, g2m.features = mouse.g2m.genes, set.ident = FALSE)
+demux_t <- subset(demux_t, subset = nFeature_RNA > 200 & percent.mt < 15)
+
+demux_t$CC.Difference <- demux_t$S.Score - demux_t$G2M.Score
+DefaultAssay(demux_t)<-"RNA"
+demux_t <- ScaleData(demux_t, vars.to.regress = c("percent.mt","S.Score","G2M.Score"), features = rownames(demux_t),verbose = TRUE)
+
+demux_t <- FindVariableFeatures(demux_t, selection.method = "vst", nfeatures = 2000)
+demux_t <- RunPCA(demux_t, features = VariableFeatures(object = demux_t))
+demux_t <- FindNeighbors(demux_t, dims = 1:17)
+demux_t <- FindClusters(demux_t, resolution = 0.6)
+demux_t <- demux_t %>% RunUMAP(dims = 1:17, verbose = FALSE,n.neighbors = 60,min.dist = 0.1)
+DimPlot(demux_t,reduction = 'umap',label = TRUE)
+demux_t<-subset(demux_t,idents = c(7,12,8),invert = TRUE)
+demux_t <- FindVariableFeatures(demux_t, selection.method = "vst", nfeatures = 2000)
+demux_t <- RunPCA(demux_t, features = VariableFeatures(object = demux_t))
+demux_t <- FindNeighbors(demux_t, dims = 1:10)
+demux_t <- FindClusters(demux_t, resolution = 0.6)
+demux_t <- demux_t %>% RunUMAP(dims = 1:10, verbose = TRUE,n.neighbors = 80,min.dist = 0.1)
+demux_t <- demux_t %>% RunUMAP(dims = 1:10,n.neighbors = 60,min.dist = 0.2)
+#seurat object To Arja as rds 
+
+## ----------- analyzing the rds-----------------------
 # # Seurat version 4.0.2; R version 4.0.5
 # Find clusters, annotate, UMAP
 
