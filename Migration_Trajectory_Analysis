@@ -1,0 +1,179 @@
+%% Scripted by Arja Ray in Matlab 2020a
+
+%% Plot trajectories, MSD vs. time, PRWM fit, find Speed and Persistence
+
+% Plot trajectories from position data
+clear
+
+load('TFP_T1_1_20230120.mat') # mat file generated from position data from Imaris
+current = TFP_T1_1_20230120;
+maxTime =30;
+
+
+nooftracks = 0;
+tracklength = ones (1000, 1);
+trackTFPSum = zeros (1000, 1);
+trackminDistSum = zeros (1000, 1);
+start = ones (1000, 1);
+
+for i = 1: size(current, 1)
+    
+    if i == 1
+        current_track = current.TrackID (i,1);
+        x_init = current.X (i,1);
+        y_init = current.Y (i,1);
+        z_init = current.Z (i,1);
+        current.X(i,1) = 0;
+        current.Y(i,1) = 0;
+        current.Z(i,1) = 0;
+        nooftracks = nooftracks + 1;
+        trackTFPSum (nooftracks, 1) = trackTFPSum (nooftracks, 1) + current.Ch3Mean (i,1);
+        trackminDistSum (nooftracks, 1) = trackminDistSum (nooftracks, 1) + current.Ch8Min (i,1);
+        % beginTime = current.Time (i,1);
+        
+    elseif  current.TrackID (i,1) == current_track
+            current.X(i,1) = current.X(i,1) - x_init;
+            current.Y(i,1) = current.Y(i,1) - y_init;
+            current.Z(i,1) = current.Z(i,1) - z_init;
+            tracklength (nooftracks, 1) = tracklength (nooftracks, 1) + 1;
+            trackTFPSum (nooftracks, 1) = trackTFPSum (nooftracks, 1) + current.Ch3Mean (i,1);
+            trackminDistSum (nooftracks, 1) = trackminDistSum (nooftracks, 1) + current.Ch8Min (i,1);
+    else
+        current_track = current.TrackID (i,1);
+        x_init = current.X (i,1);
+        y_init = current.Y (i,1);
+        z_init = current.Z (i,1);
+        current.X(i,1) = 0;
+        current.Y(i,1) = 0;
+        current.Z(i,1) = 0;
+        % tracklength (nooftracks, 1) = current.Time (i-1,1) - beginTime + 1;
+        nooftracks = nooftracks + 1;
+        start (nooftracks, 1) = i;
+        trackTFPSum (nooftracks, 1) = trackTFPSum (nooftracks, 1) + current.Ch3Mean (i,1);
+        trackminDistSum (nooftracks, 1) = trackminDistSum (nooftracks, 1) + current.Ch8Min (i,1);
+        % beginTime = current.Time (i,1);
+    end
+    
+end
+tracklength = tracklength (1: nooftracks, 1); % keeping only actual tracks
+trackTFPSum = trackTFPSum (1: nooftracks, 1);
+trackminDistSum = trackminDistSum (1: nooftracks, 1);
+trackTFP = trackTFPSum./tracklength;
+trackminDist = trackminDistSum./tracklength;
+
+
+
+
+%% Fit PRWM and calculate speed and persistence
+
+figure 
+indexL=0; indexH=0;
+reject_hi=0; reject_lo=0;
+MSD_all_hi = zeros(maxTime, nooftracks);
+MSD_all_lo = zeros(maxTime, nooftracks);
+
+for j = 1: nooftracks
+    if trackTFP (j, 1) >=22 && tracklength (j,1) >=5
+        current_length = tracklength (j, 1);
+        X = current.X(start (j) : start(j) + current_length-1);
+        Y = current.Y(start (j) : start(j) + current_length-1);
+        Z = current.Z(start (j) : start(j) + current_length-1);
+        [MSD, MSD_SD, Speed, Persistence, R_2, keep] = PRWM (X, Y, Z, current_length);
+        
+        if keep ==1
+            plot (1:1:current_length, MSD, 'b')
+            hold on
+            
+            indexH = indexH + 1;
+            MSD_all_hi(1:current_length, indexH) = MSD;
+            
+            
+            Speed_hi (indexH, 1) = Speed;
+            Persistence_hi (indexH, 1) = Persistence;
+            Motility_hi (indexH, 1) = Speed^2*Persistence;
+            R_sqrd_hi (indexH, 1) = R_2;
+            % Variance_hi (indexH, 1) = Sigma_sqr;
+        else
+            reject_hi = reject_hi + 1;
+            continue
+        end
+    elseif trackTFP (j, 1) <= 21.5 && tracklength (j,1) >=5
+        current_length = tracklength (j, 1);
+        X = current.X(start (j) : start(j) + current_length-1);
+        Y = current.Y(start (j) : start(j) + current_length-1);
+        Z = current.Z(start (j) : start(j) + current_length-1);
+        [MSD, MSD_SD, Speed, Persistence, R_2, keep] = PRWM (X, Y, Z, current_length);
+        
+        if keep == 1
+            plot (1:1:current_length, MSD, 'k')
+            hold on
+            
+            indexL = indexL + 1;
+            MSD_all_lo(1:current_length, indexL) = MSD;
+            
+            
+            Speed_lo (indexL, 1) = Speed;
+            Persistence_lo (indexL, 1) = Persistence;
+            Motility_lo (indexL, 1) = Speed^2*Persistence;
+            R_sqrd_lo (indexL, 1) = R_2;
+            % Variance_lo (indexL, 1) = Sigma_sqr;
+        else
+            reject_lo = reject_lo +1;
+            continue
+        end
+    end
+end
+
+hold off
+
+
+% Function PRWM invoked above
+% Fit Random walk model to each trajectory
+% Feed 3 vectors denoting X, Y, Z positions for the current track, starting at the origin and a scalar denoting the number of time points
+
+function [MSD, MSD_SD, Speed, Persistence, R_sqrd, keep] = PRWM (X, Y, Z, timepts)
+
+MSD=zeros(1,timepts);
+MSD_SD=zeros(1,timepts);
+sqd=zeros(timepts-1,timepts-1);
+
+for j=1:timepts-1 %time intervals
+        for k=(j+1):timepts % overlapping individual intervals
+            dx=X(k,1)-X(k-j,1);
+            dy=Y(k,1)-Y(k-j,1);
+            dz=Z(k,1)-Z(k-j,1);
+            
+            sqd(j,k-1)=dx^2+dy^2+dz^2;
+        end
+    MSD(1,j+1)=mean(nonzeros(sqd(j,:)));
+    MSD_SD(1,j+1)=std(nonzeros(sqd(j,:)));
+end
+
+
+max_time = max(5,ceil(timepts/2));
+time_use = (0:1:max_time-1)';
+MSD_use = (MSD (1, 1: size(time_use)))';
+
+fo = fitoptions('Method','NonlinearLeastSquares',...
+                   'Lower',[0 1],... %lower bound of speed is 0, lower bound for persistence is 1, the time resolution
+                   'Upper',[25, 30],... %upper bound of speed based on maxDist while tracking, that on P is total time
+                   'Startpoint',[1 1]);
+
+ft=fittype('6*a^2*b*(x-b*(1-exp(-x/b)))', 'options',fo);
+               
+% Fit the data using the fit options
+
+[model,gof] = fit(time_use,MSD_use,ft);
+P=model.b; S=model.a; R_sqrd= gof.adjrsquare;
+
+Speed = S;
+Persistence = P;
+
+#QC for fitting failures
+if R_sqrd >=0
+        keep = 1;
+    else
+        keep = 0;
+end
+
+
